@@ -1,0 +1,26 @@
+name: zombie-hunt
+description: A single zombie spawns; the client player must kill it.
+
+minecraft:
+  version: "1.21.4"
+
+world:
+  type: flat
+
+entities:
+  - type: zombie
+    pos: [4, -59, 4]
+    nbt: "{PersistenceRequired:1b}"
+
+players:
+  - name: hunter
+    pos: [0, -59, 0]
+
+client:
+  command: bun
+  args: ["../clients/hunter.js"]
+
+goal:
+  kind: kill
+  target: zombie
+  timeout: 120

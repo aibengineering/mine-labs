@@ -1,0 +1,39 @@
+plugins {
+    id 'java-library'
+    id 'net.neoforged.moddev' version '2.0.141'
+}
+
+version = mod_version
+group = mod_group_id
+
+base {
+    archivesName = 'mine-labs-ui'
+}
+
+java.toolchain.languageVersion = JavaLanguageVersion.of(21)
+
+neoForge {
+    version = project.neo_version
+    runs {
+        client {
+            client()
+            programArgument '--width'
+            programArgument '1280'
+            programArgument '--height'
+            programArgument '800'
+            programArgument '--username'
+            programArgument System.getenv('MINE_LABS_USERNAME') ?: 'LabSpectator'
+            systemProperty 'minelabs.uiUrl', System.getenv('MINE_LABS_UI_URL') ?: 'http://127.0.0.1:25578'
+            systemProperty 'minelabs.managed', 'true'
+        }
+    }
+    mods {
+        "${mod_id}" {
+            sourceSet(sourceSets.main)
+        }
+    }
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+}

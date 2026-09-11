@@ -1,0 +1,8 @@
+node_modules/
+dist/
+.vscode/
+.codex-configure-powershell/
+.mine-labs/
+*.log
+# Generated resolved scenario evidence, including runs using a custom --out.
+scenario.json

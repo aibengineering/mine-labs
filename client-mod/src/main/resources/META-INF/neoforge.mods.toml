@@ -1,0 +1,28 @@
+modLoader="javafml"
+loaderVersion="[6,)"
+license="MIT"
+
+[[mods]]
+modId="mine_labs_ui"
+version="0.1.0"
+displayName="Mine Labs UI"
+authors="Mine Labs"
+description='''
+Client-only status and control surface for local Mine Labs scenario runs.
+Shows active and retained results and can skip, select, or stop tests through
+the loopback-only Mine Labs UI API.
+'''
+
+[[dependencies.mine_labs_ui]]
+modId="neoforge"
+type="required"
+versionRange="[21.4.157,)"
+ordering="NONE"
+side="CLIENT"
+
+[[dependencies.mine_labs_ui]]
+modId="minecraft"
+type="required"
+versionRange="[1.21.4,1.21.5)"
+ordering="NONE"
+side="CLIENT"

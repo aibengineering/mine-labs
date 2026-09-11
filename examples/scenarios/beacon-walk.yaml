@@ -1,0 +1,25 @@
+name: beacon-walk
+description: The client player walks to a marked beacon position across a flat arena.
+
+minecraft:
+  version: "1.21.4"
+
+world:
+  type: flat
+
+geometry:
+  - setblock: { at: [12, -60, 12], block: gold_block }
+
+players:
+  - name: rover
+    pos: [0, -59, 0]
+
+client:
+  command: bun
+  args: ["../clients/walker.js"]
+
+goal:
+  kind: reach
+  pos: [12, -59, 12]
+  radius: 2
+  timeout: 60
