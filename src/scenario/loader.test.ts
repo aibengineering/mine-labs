@@ -24,6 +24,7 @@ test("client commands run relative to the scenario file", async (t) => {
 
   const scenario = await loadScenario(file);
   assert.equal(scenario.client.cwd, dirname(file));
+  assert.deepEqual(scenario.tags, [], "old fixtures need no labels");
 });
 
 test("a scenario template supplies reusable world setup", async (t) => {
@@ -35,6 +36,7 @@ test("a scenario template supplies reusable world setup", async (t) => {
   await writeFile(
     join(templates, "arena.yaml"),
     [
+      "tags: [acceptance]",
       "world:",
       "  type: flat",
       "  gamerules:",
@@ -58,6 +60,7 @@ test("a scenario template supplies reusable world setup", async (t) => {
   const scenario = await loadScenario(file);
 
   assert.equal(scenario.world.gamerules.doMobSpawning, false);
+  assert.deepEqual(scenario.tags, ["acceptance"]);
   assert.deepEqual(scenario.reset, ["fill -4 -59 -4 4 -50 4 air"]);
   assert.deepEqual(scenario.geometry, [{ setblock: { block: "stone", at: [0, -59, 0] } }]);
   assert.equal(scenario.client.cwd, scenarios);
@@ -68,7 +71,7 @@ test("scenario fields override template fields", async (t) => {
   t.after(() => rm(root, { recursive: true, force: true }));
   await writeFile(
     join(root, "template.yaml"),
-    "world: { type: flat, gamerules: { doMobSpawning: false } }\n",
+    "tags: [acceptance]\nworld: { type: flat, gamerules: { doMobSpawning: false } }\n",
   );
   const file = join(root, "scenario.yaml");
   await writeFile(
@@ -76,6 +79,7 @@ test("scenario fields override template fields", async (t) => {
     [
       "template: ./template.yaml",
       "world: { type: default, seed: 1 }",
+      "tags: [regression]",
       "client: { command: test-client }",
       "goal: { kind: completion }",
     ].join("\n"),
@@ -83,6 +87,7 @@ test("scenario fields override template fields", async (t) => {
 
   const scenario = await loadScenario(file);
   assert.deepEqual(scenario.world, { type: "default", dimension: "overworld", seed: 1, structures: false, time: "day", gamerules: {} });
+  assert.deepEqual(scenario.tags, ["regression"], "fixture replaces inherited labels");
 });
 
 test("templates can supply scenario fields", async (t) => {

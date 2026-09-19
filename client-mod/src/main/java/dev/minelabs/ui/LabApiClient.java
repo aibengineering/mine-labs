@@ -14,6 +14,8 @@ import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.HashMap;
 
 final class LabApiClient {
     private static final String DEFAULT_URL = "http://127.0.0.1:25578";
@@ -176,6 +178,13 @@ final class LabApiClient {
                 if (value.isJsonPrimitive()) scenarios.add(value.getAsString());
             }
         }
+        Map<String, List<String>> scenarioTags = new HashMap<>();
+        JsonObject tags = object(root, "scenarioTags");
+        if (tags != null) for (var entry : tags.entrySet()) {
+            List<String> labels = new ArrayList<>();
+            for (JsonElement label : entry.getValue().getAsJsonArray()) labels.add(label.getAsString());
+            scenarioTags.put(entry.getKey(), List.copyOf(labels));
+        }
         List<Category> categories = new ArrayList<>();
         JsonArray categoryValues = array(root, "categories");
         if (categoryValues != null) {
@@ -264,7 +273,7 @@ final class LabApiClient {
                 bool(root, "continuousEnabled", true),
                 bool(root, "singleScenarioEnabled", false),
                 string(root, "selectedCategory", null),
-                List.copyOf(scenarios),
+                List.copyOf(scenarios), Map.copyOf(scenarioTags),
                 List.copyOf(categories),
                 active,
                 totals,
@@ -320,15 +329,17 @@ final class LabApiClient {
             boolean continuousEnabled,
             boolean singleScenarioEnabled,
             String selectedCategory,
-            List<String> scenarios,
+            List<String> scenarios, Map<String, List<String>> scenarioTags,
             List<Category> categories,
             Active active,
             Totals totals,
             List<ScenarioStats> scenarioStats,
             List<Result> recent,
             Connection connection, String currentScenario, int jobs, int maxJobs, int activeCount) {
+        List<String> tagsFor(String scenario) { return scenarioTags.getOrDefault(scenario, List.of()); }
+
         static Snapshot offline(String message) {
-            return new Snapshot(false, "offline", message, false, false, null, List.of(), List.of(), null, new Totals(0, 0, 0, 0), List.of(), List.of(), null, "", 1, 1, 0);
+            return new Snapshot(false, "offline", message, false, false, null, List.of(), Map.of(), List.of(), null, new Totals(0, 0, 0, 0), List.of(), List.of(), null, "", 1, 1, 0);
         }
     }
 

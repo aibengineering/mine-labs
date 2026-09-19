@@ -5,6 +5,7 @@ import { inspectScenario } from "./inspection.js";
 
 test("inspection preserves nested logic, player scope, explicit zero radius, defaults and driver-owned conditions", () => {
   const scenario = scenarioSchema.parse({
+    tags:["regression"], description:"Protect the historical failure.",
     players: [{name:"FirstBot"},{name:"OtherBot",inventory:[{item:"cobblestone",count:64}]}],
     client:{command:"bun",env:{PRIVATE_TOKEN:"must-not-appear"}}, params:{startingHealth:7},
     goal:{kind:"all",timeout:60,goals:[
@@ -14,6 +15,10 @@ test("inspection preserves nested logic, player scope, explicit zero radius, def
     ]},
   });
   const inspection=inspectScenario("flat/combat/example",scenario);
+  assert.deepEqual(inspection.tags,["regression"]);
+  assert.equal(inspection.description,"Protect the historical failure.");
+  scenario.tags.push("changed");
+  assert.deepEqual(inspection.tags,["regression"],"inspection owns its labels");
   assert.equal(inspection.timeoutSeconds,60);
   assert.match(inspection.goal.label,/AND/);
   assert.match(inspection.goal.children![0]!.label,/All scenario players.*20 seconds.*zero recorded deaths/);

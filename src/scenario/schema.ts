@@ -153,6 +153,8 @@ const scenarioFields = {
   }).optional(),
   name: z.string().optional(),
   description: z.string().optional(),
+  /** Searchable labels; folders still describe the behavior under test. */
+  tags: z.array(z.string().trim().min(1)),
   minecraft: minecraftSchema,
   world: worldSchema,
   geometry: z.array(geometrySchema),
@@ -184,6 +186,7 @@ export const scenarioFileSchema = scenarioTemplateSchema.extend({
 // fields become a complete scenario.
 const completeScenarioSchema = z.strictObject({
   ...scenarioFields,
+  tags: scenarioFields.tags.default([]),
   minecraft: scenarioFields.minecraft.prefault({}),
   world: scenarioFields.world.prefault({}),
   geometry: scenarioFields.geometry.default([]),

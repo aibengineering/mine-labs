@@ -35,7 +35,7 @@ test("current inspection keeps original conditions and observed child results ac
   const root = await mkdtemp(join(tmpdir(), "mine-labs-inspect-"));
   const controller = new SessionController();
   const server = await startUiServer({controller,rootDir:root,port:0});
-  const scenario = scenarioSchema.parse({name:"example",players:[{name:"TestBot"}],client:{command:"bun"},goal:{kind:"all",timeout:60,goals:[{kind:"survive",seconds:20},{kind:"completion"}]}});
+  const scenario = scenarioSchema.parse({name:"example",tags:["regression"],players:[{name:"TestBot"}],client:{command:"bun"},goal:{kind:"all",timeout:60,goals:[{kind:"survive",seconds:20},{kind:"completion"}]}});
   const inspection = inspectScenario("example",scenario);
   try {
     server.onSessionStart({scenarios:[{name:"example",category:"test",inspection}],spectator: { username: "Observer" },jobs:1});
@@ -44,10 +44,13 @@ test("current inspection keeps original conditions and observed child results ac
     server.onTrialStart(claim.context);
     const progress: GoalResult = {state:"pending",detail:"all pending",children:[{state:"passed",detail:"alive 20/20s"},{state:"pending",detail:"TestBot has not reported completion"}]};
     server.onGoalProgress(claim.context,progress);
-    server.onCatalogChanged([{name:"example",category:"test",inspection:{...inspection,timeoutSeconds:90}}]);
+    server.onCatalogChanged([{name:"example",category:"test",inspection:{...inspection,tags:["acceptance"],timeoutSeconds:90}}]);
     const get = (query:string) => fetch(`http://127.0.0.1:${server.port}/api/scenario?${query}`).then(response=>response.json()) as Promise<ScenarioInspection & {progress?:GoalResult;outcome?:string}>;
     const current = await get("current=true");
     assert.equal(current.timeoutSeconds,60);
+    assert.deepEqual(current.tags,["regression"]);
+    assert.deepEqual((await get("name=example")).tags,["acceptance"]);
+    assert.deepEqual(server.snapshot().scenarioTags,{example:["acceptance"]});
     assert.deepEqual(current.progress,progress);
     assert.equal((await get("name=example")).timeoutSeconds,90);
     server.onTrialResult({scenario:"example",outcome:"pass",elapsedMs:21000,goalText:claim.context.goalText,goal:{state:"passed",detail:"all passed",children:[{state:"passed",detail:"alive 20/20s"},{state:"passed",detail:"TestBot completed"}]}},claim.context);

@@ -40,7 +40,7 @@ final class LabHud {
                     TEXT));
             lines.add(new Line("Cycle    " + active.cycle() + "  /  elapsed " + age(active.startedAt()), MUTED));
             if (!active.goalText().isBlank()) {
-                lines.add(new Line("Goals    F10 > Scenario details", GOOD));
+                lines.add(new Line("Details  " + ClientEvents.detailsKeyLabel(), GOOD));
             }
         } else {
             lines.add(new Line(snapshot.message(), snapshot.available() ? MUTED : WARN));

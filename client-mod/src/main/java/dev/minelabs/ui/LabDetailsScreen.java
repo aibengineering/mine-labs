@@ -18,6 +18,7 @@ final class LabDetailsScreen extends Screen {
     private final LabApiClient api;
     private final String scenario;
     private final boolean current;
+    private final Screen parent;
     private JsonObject details;
     private String error = "";
     private boolean fetching;
@@ -29,7 +30,12 @@ final class LabDetailsScreen extends Screen {
     private Button run;
 
     LabDetailsScreen(LabApiClient api, String scenario, boolean current) {
+        this(api, scenario, current, ClientEvents.dashboard());
+    }
+
+    LabDetailsScreen(LabApiClient api, String scenario, boolean current, Screen parent) {
         super(Component.literal("Scenario details"));
+        this.parent = parent;
         this.api = api; this.scenario = scenario; this.current = current;
     }
 
@@ -43,7 +49,7 @@ final class LabDetailsScreen extends Screen {
                     button -> {tab = selected; scroll = 0; rebuildWidgets();})
                     .bounds(width / 2 - buttonWidth * 3 / 2 + index * buttonWidth, 48, buttonWidth - 4, 20).build());
         }
-        addRenderableWidget(Button.builder(Component.literal("Back to dashboard"), button -> onClose())
+        addRenderableWidget(Button.builder(Component.literal(parent == null ? "Back to world" : "Back"), button -> onClose())
                 .bounds(16, height - 30, 145, 20).build());
         run = addRenderableWidget(Button.builder(Component.literal(current ? "Run again" : "Run scenario"), button -> ClientEvents.selectScenario(displayedScenario()))
                 .bounds(width - 136, height - 30, 120, 20).build());
@@ -88,6 +94,13 @@ final class LabDetailsScreen extends Screen {
         List<Line> output = new ArrayList<>();
         if (details == null) { add(output, "Loading scenario conditions...", MUTED, 0); lines = output; return; }
         add(output, text(details, "name"), TEXT, 0);
+        String name = text(details, "name");
+        if (name.contains("/")) add(output, "Folder: " + name.substring(0, name.lastIndexOf('/')), MUTED, 0);
+        if (details.has("tags")) for (JsonElement tag : details.getAsJsonArray("tags")) {
+            String label = tag.getAsString();
+            add(output, TagStyle.badge(label).getString(), 0xFF000000 | TagStyle.color(label), 0);
+        }
+        add(output, "Purpose", TEXT, 0);
         add(output, text(details, "description"), MUTED, 0);
         add(output, text(details, "source"), MUTED, 0);
         add(output, "", MUTED, 0);
@@ -151,7 +164,7 @@ final class LabDetailsScreen extends Screen {
         else return super.keyPressed(key, scan, modifiers);
         return true;
     }
-    @Override public void onClose() {minecraft.setScreen(ClientEvents.dashboard());}
+    @Override public void onClose() {minecraft.setScreen(parent);}
     private String displayedScenario() {return current && details != null ? text(details, "name") : scenario;}
     @Override public boolean isPauseScreen() {return false;}
     private static String text(JsonObject object, String key) {return object.has(key) ? object.get(key).getAsString() : "";}

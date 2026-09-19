@@ -91,6 +91,7 @@ export interface UiSnapshot {
   scenarioStats: UiScenarioStats[];
   recent: UiResult[];
   currentScenario: string | null;
+  scenarioTags: Record<string, string[]>;
 }
 
 interface ScenarioAccumulator {
@@ -285,6 +286,7 @@ export class UiServer implements SessionObserver {
     return {
       apiVersion: 1,
       currentScenario: this.#current?.inspection.name ?? null,
+      scenarioTags: Object.fromEntries([...this.#inspections].map(([name, inspection]) => [name, inspection.tags])),
       connection: this.#connection,
       phase: this.#phase,
       generatedAt: new Date().toISOString(),

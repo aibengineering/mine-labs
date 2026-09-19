@@ -178,6 +178,44 @@ checks that another run can reuse its ports. It needs Java 21, a server download
 or cache, and writable temporary storage. On restricted hosts, set `TEMP` and
 `TMP` to a writable directory inside the workspace.
 
+
+## Scenario purpose and labels
+
+Press **F9** to open the current (or most recently run) scenario's details directly.
+Press F9 again or Escape to return to the previous screen or world. The shortcut
+is remappable under Minecraft Controls → Mine Labs; F10 still opens the dashboard.
+Details show the scenario's purpose, labels, declared setup, parameters and live
+goal observations. Viewing details does not pause a running trial.
+
+Scenarios may declare `tags: [navigation, smoke]`. Mine Labs has no built-in test
+types: your suite owns the vocabulary and should document each label's meaning.
+Tags are nonempty strings with surrounding whitespace trimmed, default to an empty
+list, and can be inherited from templates. A fixture's `tags` replaces the whole
+inherited list. Labels are case-sensitive; lowercase names are a useful convention.
+Use `description` for the reason a fixture exists. Folders and tags are independent.
+
+Every tag appears as a text badge. Its exact label deterministically selects a
+color from a fixed palette, shared by the scenario list, tag filter and details
+screen. Catalog order, filtering and newly added tags do not change existing
+colors. Colors carry no test-type meaning and may repeat; the text identifies the
+tag. Green and red remain reserved for result states. There is no color configuration
+or special styling for particular tag names.
+
+The dashboard searches tags alongside names and cycles available labels with the
+All tags button. These filters affect the displayed list; Run folder and Run all
+continue to run their entire folder scope, as with text search.
+
+```yaml
+name: lava-approach
+tags: [navigation, smoke]
+description: >-
+  Guard against the observed overshoot into lava after a downhill approach.
+  The bot must finish the approach with full health and successful completion.
+```
+
+Refreshing the catalog updates labels for future runs. Current-run details retain
+the original description, tags and goals alongside that run's observations.
+
 ## License
 
 [MIT](LICENSE). Minecraft and third-party dependencies retain their own licenses.

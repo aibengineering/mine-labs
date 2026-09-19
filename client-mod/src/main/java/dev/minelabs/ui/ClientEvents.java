@@ -29,6 +29,24 @@ final class ClientEvents {
             GLFW.GLFW_KEY_F10,
             "key.categories.mine_labs_ui");
 
+    private static final KeyMapping OPEN_DETAILS = new KeyMapping(
+            "key.mine_labs_ui.details", InputConstants.Type.KEYSYM, GLFW.GLFW_KEY_F9,
+            "key.categories.mine_labs_ui");
+
+    static String detailsKeyLabel() { return OPEN_DETAILS.getTranslatedKeyMessage().getString(); }
+
+    private static void toggleDetails() {
+        Minecraft minecraft = Minecraft.getInstance();
+        if (minecraft.screen instanceof LabDetailsScreen details) { details.onClose(); return; }
+        String scenario = API.snapshot().currentScenario();
+        if (!scenario.isBlank()) {
+            // Remember the caller so a quick inspection returns directly to the world.
+            minecraft.setScreen(new LabDetailsScreen(API, scenario, true, minecraft.screen));
+        } else if (minecraft.player != null) {
+            minecraft.player.displayClientMessage(Component.literal("No scenario has run yet. Choose one in Mine Labs."), true);
+        }
+    }
+
     private ClientEvents() {
     }
 
@@ -36,6 +54,7 @@ final class ClientEvents {
 
     static void registerKeyMappings(RegisterKeyMappingsEvent event) {
         event.register(OPEN_DASHBOARD);
+        event.register(OPEN_DETAILS);
     }
 
     @SubscribeEvent
@@ -69,6 +88,11 @@ final class ClientEvents {
 
     @SubscribeEvent
     public static void onScreenKey(ScreenEvent.KeyPressed.Pre event) {
+        if (OPEN_DETAILS.matches(event.getKeyCode(), event.getScanCode())) {
+            event.setCanceled(true);
+            toggleDetails();
+            return;
+        }
         if (OPEN_DASHBOARD.matches(event.getKeyCode(), event.getScanCode())) {
             event.setCanceled(true);
             if (event.getScreen() instanceof LabScreen screen) screen.onClose();
@@ -127,6 +151,7 @@ final class ClientEvents {
                         new ServerData("Mine Labs", target.address(), ServerData.Type.OTHER), false, null);
             }
         }
+        while (OPEN_DETAILS.consumeClick()) toggleDetails();
         while (OPEN_DASHBOARD.consumeClick()) {
             minecraft.setScreen(DASHBOARD);
         }

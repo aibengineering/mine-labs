@@ -5,6 +5,7 @@ export interface InspectionGoal { label: string; children?: InspectionGoal[] }
 export interface ScenarioInspection {
   name: string;
   description: string;
+  tags: string[];
   timeoutSeconds: number;
   goal: InspectionGoal;
   setup: Array<{ title: string; lines: string[] }>;
@@ -14,6 +15,7 @@ export interface ScenarioInspection {
 /** A read-only description of the validated fixture; never includes launcher environment values. */
 export function inspectScenario(name: string, scenario: Scenario): ScenarioInspection {
   return {
+    tags: [...scenario.tags],
     name, description: scenario.description ?? "No description provided.", timeoutSeconds: scenario.goal.timeout ?? 120,
     goal: inspectGoal(scenario.goal, scenario.players[0]!.name),
     setup: [

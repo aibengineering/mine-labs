@@ -3,6 +3,8 @@ package dev.minelabs.ui;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
+import net.minecraft.ChatFormatting;
 import java.util.Locale;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.Button;
@@ -32,6 +34,8 @@ final class LabScreen extends Screen {
     private final LabApiClient api;
     private View view = View.OVERVIEW;
     private String category;
+    private String tag;
+    private Map<String, List<String>> displayedTags = Map.of();
     private int page;
     private Button continuousButton;
     private Button singleScenarioButton;
@@ -63,6 +67,8 @@ final class LabScreen extends Screen {
         int center = width / 2;
         LabApiClient.Snapshot snapshot = api.snapshot();
         displayedScenarios = snapshot.scenarios();
+        displayedTags = snapshot.scenarioTags();
+        if (tag != null && !availableTags(snapshot).contains(tag)) tag = null;
         displayedConnection = snapshot.connection() != null;
         int actionGap = 6;
         int actionWidth = Math.min(98, Math.max(52, (width - 24 - actionGap * 4) / 5));
@@ -101,11 +107,11 @@ final class LabScreen extends Screen {
         detailsButton = addRenderableWidget(Button.builder(Component.literal("Scenario details"), button ->
                 minecraft.setScreen(new LabDetailsScreen(api, api.snapshot().currentScenario(), true)))
                 .bounds(contentLeft() + 222, TABS_Y, Math.max(90, contentWidth() - 334), 20).build());
-        int searchWidth = (contentWidth() - 94) / 2;
+        int searchWidth = (contentWidth() - 102) / 3;
         int cursor = search == null ? query.length() : search.getCursorPosition();
         search = addRenderableWidget(new EditBox(font, contentLeft(), CATEGORY_Y, searchWidth, 20, Component.literal("Search scenarios")));
         search.setMaxLength(200);
-        search.setHint(Component.literal("Search scenarios or folders..."));
+        search.setHint(Component.literal("Search names or tags..."));
         search.setValue(query);
         search.setCursorPosition(cursor);
         search.setResponder(value -> { query = value; page = 0; filtersDirty = true; });
@@ -116,6 +122,14 @@ final class LabScreen extends Screen {
                 })
                 .bounds(contentLeft() + searchWidth + 8, CATEGORY_Y, searchWidth, 20).build());
         categoryButton.setTooltip(Tooltip.create(Component.literal("Choose a folder. Scroll or use arrow keys in the list.")));
+        Button tagButton = addRenderableWidget(Button.builder(tag == null ? Component.literal("All tags") : TagStyle.badge(tag), button -> {
+            List<String> tags = availableTags(api.snapshot());
+            int next = tag == null ? 0 : tags.indexOf(tag) + 1;
+            tag = next < tags.size() ? tags.get(next) : null;
+            page = 0;
+            rebuildWidgets();
+        }).bounds(contentLeft() + (searchWidth + 8) * 2, CATEGORY_Y, searchWidth, 20).build());
+        tagButton.setTooltip(Tooltip.create(Component.literal("Cycle labels to filter the list across folders. Run folder / Run all still runs the entire folder.")));
         refreshButton = addRenderableWidget(Button.builder(Component.literal("Refresh"), button -> api.control("refresh", null))
                 .bounds(contentLeft() + contentWidth() - 78, CATEGORY_Y, 78, 20).build());
         refreshButton.setTooltip(Tooltip.create(Component.literal("Reload scenario YAMLs from disk. The active run keeps its original setup.")));
@@ -159,7 +173,7 @@ final class LabScreen extends Screen {
     @Override
     public void tick() {
         // The title screen can open before the first HTTP response arrives.
-        if (filtersDirty || !displayedScenarios.equals(api.snapshot().scenarios())
+        if (filtersDirty || !displayedTags.equals(api.snapshot().scenarioTags()) || !displayedScenarios.equals(api.snapshot().scenarios())
                 || displayedConnection != (api.snapshot().connection() != null)) {
             filtersDirty = false;
             normalizeCategory(api.snapshot());
@@ -185,11 +199,15 @@ final class LabScreen extends Screen {
         for (int index = start; index < end; index++) {
             LabApiClient.ScenarioStats stats = statistics.get(index);
             int y = TABLE_ROWS_Y + (index - start) * ROW_HEIGHT - 5;
-            Button button = Button.builder(Component.literal(stats.scenario()), ignored -> ClientEvents.selectScenario(stats.scenario()))
+            var label = Component.empty();
+            for (String tag : snapshot.tagsFor(stats.scenario()))
+                label.append(TagStyle.badge(tag)).append(" ");
+            label.append(Component.literal(stats.scenario()).withStyle(ChatFormatting.WHITE));
+            Button button = Button.builder(label, ignored -> ClientEvents.selectScenario(stats.scenario()))
                     .bounds(x, y, buttonWidth, 18)
                     .build();
             button.active = snapshot.scenarios().contains(stats.scenario());
-            button.setTooltip(Tooltip.create(Component.literal(stats.scenario())));
+            button.setTooltip(Tooltip.create(Component.literal(stats.scenario() + "\nTags: " + String.join(", ", snapshot.tagsFor(stats.scenario())))));
             addRenderableWidget(button);
             addRenderableWidget(Button.builder(Component.literal("Info"), ignored ->
                     minecraft.setScreen(new LabDetailsScreen(api, stats.scenario(), false)))
@@ -207,7 +225,7 @@ final class LabScreen extends Screen {
         String message = api.notice().isBlank() ? snapshot.message() : api.notice();
         graphics.drawCenteredString(font, fitWidth(message, contentWidth()), width / 2, 27, snapshot.available() && !api.controlFailed() ? TEXT : BAD);
         if (snapshot.active() != null && !snapshot.active().goalText().isBlank()) {
-            String condition = "Full goals and live checks: Scenario details";
+            String condition = "Full goals and live checks: " + ClientEvents.detailsKeyLabel();
             graphics.drawCenteredString(font, fitWidth(condition, contentWidth()), width / 2, 39, GOOD);
         }
         renderSummary(graphics, snapshot.totals());
@@ -398,8 +416,13 @@ final class LabScreen extends Screen {
         return snapshot.recent().stream().filter(result -> matches(result.scenario(), snapshot)).toList();
     }
 
+    private List<String> availableTags(LabApiClient.Snapshot snapshot) {
+        return snapshot.scenarioTags().values().stream().flatMap(List::stream).distinct().sorted().toList();
+    }
+
     private boolean matches(String scenario, LabApiClient.Snapshot snapshot) {
-        String name = scenario.toLowerCase(Locale.ROOT);
+        if (tag != null && !snapshot.tagsFor(scenario).contains(tag)) return false;
+        String name = (scenario + " " + String.join(" ", snapshot.tagsFor(scenario))).toLowerCase(Locale.ROOT);
         for (String term : query.toLowerCase(Locale.ROOT).trim().split("\\s+")) if (!name.contains(term)) return false;
         return category == null || snapshot.categories().stream()
                 .anyMatch(folder -> folder.name().equals(category) && folder.scenarios().contains(scenario));
