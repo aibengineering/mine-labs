@@ -105,6 +105,7 @@ not treat them as runnable trials.
 | `entityCount` | `entity`, `min?`, `max?`      | live entity count within [min, max]            |
 | `hasItem`   | `item`, `count?` (default 1)    | player's inventory holds count of item         |
 | `blockAt`   | `pos`, `block`                  | block at pos matches the requested block       |
+| `blocksAt`  | `positions`, `block`            | every listed position matches the requested block |
 | `health`    | `health?` (default 1)           | player health >= threshold                     |
 | `chat`      | `contains` (string or list)     | every string seen in chat/messages             |
 | `completion` | —                              | client process reports successful completion   |
@@ -118,6 +119,12 @@ client. Composite `all`/`any` goals do not accept `who`.
 `timeout` belongs only on the top-level goal and limits settlement of the whole
 trial. Unknown fields are rejected so misspelled scenario options cannot be
 silently ignored.
+
+`blockAt.pos` and every entry in `blocksAt.positions` must be an absolute integer
+`[x, y, z]` cell coordinate. `blocksAt.positions` must be nonempty. Both goals
+observe the scenario's dimension and report mismatching coordinates; combine
+groups under `all` to check different block types, including `air`. Player
+positions and `reach` goals may still use fractional coordinates.
 
 ## Client processes
 
@@ -272,15 +279,15 @@ One command runs scenarios for agents and opens the client experience:
 mine-labs run scenarios/example.yaml
 mine-labs run scenarios/flat --jobs 4 --repeat 10
 mine-labs run scenarios/flat --jobs 4 --repeat forever
-mine-labs run scenarios --client
-mine-labs run scenarios/example.yaml --client
+mine-labs run scenarios --spectator
+mine-labs run scenarios/example.yaml --spectator
 ```
 
 Files and folders run headlessly once by default. `--repeat` counts complete
-passes over the supplied catalog, shared across the parallel workers. `--client`
+passes over the supplied catalog, shared across the parallel workers. `--spectator`
 opens the bundled NeoForge dashboard; without a path, `run` opens `./scenarios`.
 A folder opens the selector; a single file starts immediately. An explicit
-`--repeat N` with `--client` queues that many passes and then pauses for inspection.
+`--repeat N` with `--spectator` queues that many passes and then pauses for inspection.
 
 The dashboard has **Keep running**, **Repeat: ONE/FOLDER**, and **Parallel**
 controls. With Keep running off, selecting one scenario runs one copy per
@@ -292,18 +299,19 @@ batch and closes its worlds while leaving the catalog open.
 
 ### Preparing the next observed scenario
 
-While worker 1 runs in client mode, Mine Labs prepares one predicted successor
+While worker 1 runs in spectator mode, Mine Labs prepares one predicted successor
 on a separate, fresh server: boot, chunk loading, and world setup.
 It freezes world ticking before applying setup commands. Scenario
 tick scripts and declared entities activate only at the start boundary. The
 prepared server stays frozen until selected, its bots have joined and completed
 their preparation handshake, and the named observer has joined
 and been placed; Mine Labs then unfreezes it and sends the clients `start`.
-There is no fixed three-second observer delay in managed client mode.
+There is no fixed three-second observer delay in managed spectator mode.
 
 Vanilla tick freeze excludes players. Bots therefore join only after selection,
 so their health, air, effects, and external-process timers cannot age during
-standby. Clients still keep their players safe during the final handshake and
+standby. With Auto-start off, a selected scenario waits at Ready after its bots
+join, and their players keep ticking until it starts. Clients still keep their players safe during the final handshake and
 wait for `start` before beginning their behavior.
 
 Lookahead follows the remaining folder batch, repeat mode, and cycle bound
@@ -362,7 +370,7 @@ benchmark retains its deliberate sharing of separated locations on one seed.
 
 ## Minecraft client UI
 
-`run --client` owns the NeoForge client and a loopback-only control API on an
+`run --spectator` owns the NeoForge client and a loopback-only control API on an
 automatically allocated port (`--ui-port` overrides it). Closing the client
 stops the session. F10 opens the dashboard from the world or Minecraft menus.
 Search, folder selection, Refresh, scenario inspection, and retained results
@@ -446,8 +454,40 @@ animal spawning are disabled, and view/simulation distance is eight chunks.
 
 ### Viewing natural-world verification
 
-Use `mine-labs run <manifest.yaml> --client`. Each surveyed location appears in the catalog; select one, run the folder, or enable Keep running.
+Use `mine-labs run <manifest.yaml> --spectator`. Each surveyed location appears in the catalog; select one, run the folder, or enable Keep running.
 
 ### Client artifacts
 
 Each client receives `MINE_LABS_ARTIFACTS_DIR`, an absolute path specific to its trial. Clients own the contents and should namespace files by player when necessary. Mine Labs retains this `artifacts/` directory beside `client.log` and the result when it removes the isolated server world. Observed client runs use a preparation directory while alive, then copy the evidence into the selected trial's result directory after the clients stop. Headless and verification clients write directly inside their trial directory.
+
+## Spectator mods
+
+`client:` launches the scenario participant, in any language. `--spectator`
+opens the managed Java/NeoForge viewer.
+The participant runs in both terminal and spectator modes.
+
+A scenario or shared template can declare local spectator-only NeoForge 1.21.4
+JARs and optional JVM system properties:
+
+```yaml
+spectator:
+  mods:
+    - id: my_overlay
+      path: ./mods/my-overlay.jar
+  systemProperties:
+    myoverlay.setting: "value"
+```
+
+Mod paths resolve relative to the file declaring them, including a template.
+A scenario's `spectator` field replaces the entire template field. Use the same
+stable `id` for all versions of a mod. Mine Labs combines declarations across
+the selected catalog, deduplicates equal IDs with identical file contents, and
+rejects conflicting versions or property values before opening the viewer.
+Properties beginning with `minelabs.` are reserved. Supply compatible JARs and
+all their dependencies; Mine Labs does not download or build third-party mods.
+
+Mods apply to the whole viewing session, including scenarios that do not declare
+them. Catalog refresh rejects changed JAR contents or properties with a restart
+message. Restart with `--spectator` to load changes. Terminal runs do not install
+spectator mods. Files named `mine-labs-spectator-<id>.jar` in the managed instance
+are owned and reconciled by Mine Labs; other manually installed JARs remain.

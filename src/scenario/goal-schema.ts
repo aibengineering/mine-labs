@@ -15,7 +15,7 @@
  */
 
 import { z } from "zod";
-import { absolutePosSchema } from "./position-schema.js";
+import { absolutePosSchema, blockPosSchema } from "./position-schema.js";
 
 // Every leaf may be attributed to a declared player. World observations remain
 // independent: attribution does not let a client assert that the world changed.
@@ -61,8 +61,15 @@ const hasItemGoalConditionSchema = z.strictObject({
 const blockAtGoalConditionSchema = z.strictObject({
   ...leafGoalFields,
   kind: z.literal("blockAt"),
-  pos: absolutePosSchema,
+  pos: blockPosSchema,
   block: z.string().min(1),
+});
+
+const blocksAtGoalConditionSchema = z.strictObject({
+  ...leafGoalFields,
+  kind: z.literal("blocksAt"),
+  block: z.string().min(1),
+  positions: z.array(blockPosSchema).min(1),
 });
 
 const healthGoalConditionSchema = z.strictObject({
@@ -95,6 +102,7 @@ const leafGoalConditionSchema = z.discriminatedUnion("kind", [
   entityDistanceGoalConditionSchema,
   hasItemGoalConditionSchema,
   blockAtGoalConditionSchema,
+  blocksAtGoalConditionSchema,
   healthGoalConditionSchema,
   chatGoalConditionSchema,
   completionGoalConditionSchema,
@@ -142,6 +150,7 @@ export const goalSchema = z.discriminatedUnion("kind", [
   entityDistanceGoalConditionSchema.extend(rootGoalFields),
   hasItemGoalConditionSchema.extend(rootGoalFields),
   blockAtGoalConditionSchema.extend(rootGoalFields),
+  blocksAtGoalConditionSchema.extend(rootGoalFields),
   healthGoalConditionSchema.extend(rootGoalFields),
   chatGoalConditionSchema.extend(rootGoalFields),
   completionGoalConditionSchema.extend(rootGoalFields),

@@ -7,6 +7,7 @@ import { scenarioSchema } from "../scenario/schema.js";
 import { delay } from "../util/fs.js";
 import type { RunResult } from "../trial/run.js";
 import { createClientSessionWorker } from "./client-worker.js";
+import { SessionController } from "./controller.js";
 import type { SessionScenario, TrialContext } from "./run.js";
 import type { createSessionWorker } from "./worker.js";
 
@@ -99,6 +100,27 @@ test("shutdown during preparation cancels the gate and a failed standby retries 
   } finally { await harness.close(); }
 });
 
+test("manual start connects the observer but holds execution; closing cancels the hold", async () => {
+  const harness = await createHarness();
+  try {
+    harness.controller.setAutoStart(false);
+    const first = harness.worker.runTrial(entry("a"), harness.context("a", 1));
+    await until(() => harness.controller.awaitingStartTrialId === "trial-1");
+    assert.equal(harness.connected, "a");
+    assert.deepEqual(harness.started, []);
+    harness.controller.startPreparedTrial("trial-1");
+    await until(() => harness.started.length === 1);
+    harness.servers[0]!.finish.resolve();
+    await first;
+    const second = harness.worker.runTrial(entry("b"), harness.context("b", 2));
+    await until(() => harness.controller.awaitingStartTrialId === "trial-2");
+    await harness.worker.close();
+    await second;
+    assert.deepEqual(harness.started, ["a"]);
+    assert.equal(harness.controller.awaitingStartTrialId, undefined);
+  } finally { await harness.close(); }
+});
+
 function entry(name: string): SessionScenario {
   return { scenario: scenarioSchema.parse({ name, players: [{ name: "Tester" }],
     client: { command: "unused" }, goal: { kind: "completion" } }) };
@@ -113,6 +135,7 @@ async function until(condition: () => boolean): Promise<void> {
 }
 
 async function createHarness() {
+  const controller = new SessionController();
   const root = await mkdtemp(join(tmpdir(), "mine-labs-lookahead-"));
   const servers: Array<{ prepared: boolean; finished: boolean; closed: boolean; finish: ReturnType<typeof Promise.withResolvers<void>> }> = [];
   const started: string[] = [];
@@ -163,14 +186,14 @@ async function createHarness() {
       async close() { await result; state.closed = true; },
     };
   };
-  const worker = createClientSessionWorker({ rootDir: root, scenarios: [], spectator: { username: "Observer" }, log: () => {},
+  const worker = createClientSessionWorker({ rootDir: root, scenarios: [], controller, spectator: { username: "Observer" }, log: () => {},
     observer: {
       onConnectionChanged: connection => { connected = connection?.id; if (connection) connections.push(connection.id); },
       onTrialRunning: context => { started.push(context.scenario); },
     },
   }, join(root, "servers"), () => next, createWorker);
   return {
-    worker, servers, started, connections, root,
+    worker, controller, servers, started, connections, root,
     get next() { return next; }, set next(entry: SessionScenario | undefined) { next = entry; },
     set holdConnection(gate: Promise<void>) { holdConnection = gate; },
     get connected() { return connected; },

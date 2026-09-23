@@ -1,5 +1,6 @@
 {
   "key.categories.mine_labs_ui": "Mine Labs",
   "key.mine_labs_ui.open": "Open the Mine Labs test dashboard",
-  "key.mine_labs_ui.details": "Open current scenario details"
+  "key.mine_labs_ui.details": "Open current scenario details",
+  "key.mine_labs_ui.start": "Start prepared scenario"
 }

@@ -6,6 +6,7 @@ import { SessionController } from "../session/controller.js";
 import { runSession } from "../session/run.js";
 import { startUiServer } from "./server.js";
 import { launchSpectatorClient, SPECTATOR_USERNAME } from "./launch.js";
+import { collectSpectatorSetup, spectatorSetupKey } from "./spectator-mods.js";
 
 /** One owned lifetime for the catalog API, development client, and replaceable scenario servers. */
 export async function openLab(options: {
@@ -14,12 +15,16 @@ export async function openLab(options: {
   signal?: AbortSignal; log: (message: string) => void;
 }): Promise<void> {
   const catalog = await loadRunCatalog(options.paths, SPECTATOR_USERNAME);
+  const spectatorSetup = await collectSpectatorSetup(catalog.scenarios.map(({ scenario }) => scenario));
   const rootDir = resolve(options.rootDir);
   await mkdir(rootDir, { recursive: true });
   const controller = new SessionController();
   controller.setJobs(options.jobs ?? 1);
   controller.setContinuous(false);
-  if (options.repeat === Number.POSITIVE_INFINITY) controller.setContinuous(true);
+  if (options.repeat === Number.POSITIVE_INFINITY) {
+    controller.setContinuous(true);
+    controller.selectCategory(undefined); // --repeat forever explicitly starts the catalog.
+  }
   else if (options.repeat !== undefined) controller.queueBatch(catalog.scenarios.length * options.repeat);
   else if (catalog.initial) controller.selectScenario(catalog.initial);
   const stop = (): void => controller.stop();
@@ -31,6 +36,10 @@ export async function openLab(options: {
       // Validate the whole replacement before publishing it. Active trials retain
       // their original entry; the scheduler reads this array on its next claim.
       const refreshed = await loadRunCatalog(options.paths, SPECTATOR_USERNAME);
+      const nextSetup = await collectSpectatorSetup(refreshed.scenarios.map(({ scenario }) => scenario));
+      if (spectatorSetupKey(nextSetup) !== spectatorSetupKey(spectatorSetup)) {
+        throw new Error("Spectator mods or JVM properties changed. Restart Mine Labs with --spectator to load them.");
+      }
       catalog.scenarios.splice(0, catalog.scenarios.length, ...refreshed.scenarios);
       return catalog.scenarios.map(({ id, scenario, category }) => ({ name: id ?? scenario.name ?? "scenario", category: category ?? "other", inspection: inspectScenario(id ?? scenario.name ?? "scenario", scenario) }));
     },
@@ -38,7 +47,7 @@ export async function openLab(options: {
   options.signal?.addEventListener("abort", stop, { once: true });
   try {
     options.signal?.throwIfAborted();
-    client = await launchSpectatorClient({ rootDir, uiPort: ui.port, log: options.log });
+    client = await launchSpectatorClient({ rootDir, uiPort: ui.port, log: options.log, setup: spectatorSetup });
     void client.closed.catch((error: unknown) => { clientFailure = error; }).finally(stop);
     await runSession({
       scenarios: catalog.scenarios, rootDir, spectator: { username: SPECTATOR_USERNAME },

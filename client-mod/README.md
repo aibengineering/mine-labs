@@ -34,7 +34,7 @@ regular JAR, not the sources JAR. Restart that instance to load the mod.
 Manual copying only installs the mod; it does not start a Mine Labs session.
 To connect it to a running local session, set the client JVM property
 `-Dminelabs.uiUrl=http://127.0.0.1:PORT` to that session's control API port. You can
-choose a fixed port with `run --client --ui-port PORT`.
+choose a fixed port with `run --spectator --ui-port PORT`.
 
 ## Managed client
 
@@ -43,7 +43,7 @@ Microsoft. You must own Minecraft: Java Edition and agree to the
 [Minecraft EULA](https://www.minecraft.net/en-us/eula). The local offline
 development launch does not replace game ownership.
 
-Run `bunx --bun mine-labs run --client ./scenarios` to launch the bundled NeoForge
+Run `bunx --bun mine-labs run --spectator ./scenarios` to launch the bundled NeoForge
 development client and open its scenario dashboard. No separate instance install
 is required. The dashboard is also available from the title screen and F10.
 The session passes its local API URL to the client and publishes a new connection
@@ -83,3 +83,25 @@ handed to the bot driver; driver-defined completion checks are labeled explicitl
 All text wraps and scrolls with the mouse wheel, arrows, Page Up/Down, Home/End.
 
 **Parallel** selects the worker count while idle. A scenario selection runs one copy per worker; a folder selection visits each entry once. Worker 1 owns the spectator connection; other workers run independently and contribute to the same results. **Keep running** repeats the selected scenario or folder. Worker 1 prepares one fresh server ahead and holds its world frozen until selected and the observer has connected. Schedule changes discard stale preparation. Other workers can reuse compatible declared resets.
+
+### Inspect before starting
+
+**Auto-start: ON** is the default in the managed client. Turn it **OFF** to load
+and inspect the watched scenario before running it. Once ready, the world stays
+frozen, the bot drivers wait for their start signal, and the trial timer has not
+started. Players still tick while frozen, so air, fire, and effects keep changing
+until the scenario starts. Fly around or press **F9** for scenario details, then press **F8** or
+click **Start scenario** in the F10 dashboard. F8 can be rebound in Minecraft's
+Controls settings.
+
+This preference lasts for the session and applies to each watched scenario,
+including repeats. Turning Auto-start back on releases a scenario already waiting.
+Changing it during a run affects the next scenario. **Keep running** separately
+controls whether another trial loads after completion. Background parallel workers
+continue automatically. Return to Labs, selecting another scenario, and stopping
+all cancel the pending start; an old start click cannot release a newer trial.
+
+The loopback API exposes `autoStartEnabled`, `awaitingStartTrialId`, and phase
+`ready`. Use `{"action":"auto-start","enabled":false}` to change the preference
+and `{"action":"start","trialId":"<awaitingStartTrialId>"}` to start that trial
+via `POST /api/control`. A stale or premature start returns HTTP 409.

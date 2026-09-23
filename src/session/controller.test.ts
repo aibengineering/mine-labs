@@ -2,6 +2,47 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { SessionController } from "./controller.js";
 
+test("auto-start defaults on; manual starts only release the matching prepared trial", async () => {
+  const controller = new SessionController();
+  const signal = controller.beginTrial("first");
+  assert.equal(controller.autoStartEnabled, true);
+  await controller.waitForStart("first", signal);
+  assert.equal(controller.awaitingStartTrialId, undefined);
+  controller.setAutoStart(false);
+  let started = false;
+  const pending = controller.waitForStart("first", signal).then(() => { started = true; });
+  await Promise.resolve();
+  assert.equal(started, false);
+  assert.equal(controller.startPreparedTrial("old"), false);
+  assert.equal(controller.startPreparedTrial("first"), true);
+  await pending;
+  assert.equal(controller.autoStartEnabled, false, "starting once preserves the preference");
+  assert.equal(controller.startPreparedTrial("first"), false);
+  const next = controller.waitForStart("second", controller.beginTrial("second"));
+  assert.equal(controller.startPreparedTrial("first"), false, "stale clicks cannot start the next trial");
+  controller.setAutoStart(true);
+  await next;
+  assert.equal(controller.awaitingStartTrialId, undefined);
+});
+
+test("skip, menu, selection and stop cancel a pending start without leaking its permit", async () => {
+  for (const cancel of [
+    (controller: SessionController) => controller.skip(),
+    (controller: SessionController) => controller.returnToMenu(),
+    (controller: SessionController) => controller.selectScenario("next"),
+    (controller: SessionController) => controller.stop(),
+  ]) {
+    const controller = new SessionController();
+    controller.setAutoStart(false);
+    const signal = controller.beginTrial("waiting");
+    const rejected = assert.rejects(controller.waitForStart("waiting", signal));
+    cancel(controller);
+    await rejected;
+    assert.equal(controller.awaitingStartTrialId, undefined);
+    assert.equal(controller.startPreparedTrial("waiting"), false);
+  }
+});
+
 test("returning to the menu cancels the trial and queued work but keeps the session alive", async () => {
   const controller = new SessionController();
   controller.selectCategory("combat");
@@ -48,22 +89,38 @@ test("stopping cancels both the active trial and run lifetime", () => {
   assert.equal(trial.reason, "stop");
 });
 
-test("repeat mode pauses and resumes between trials", async () => {
+test("repeat preference stays idle until a scenario is selected, even after another scheduler wake", async () => {
   const controller = new SessionController();
   controller.setContinuous(false);
-  assert.equal(controller.continuousEnabled, false);
-
   let resumed = false;
-  const waiting = controller.waitUntilRunnable().then(() => {
-    resumed = true;
-  });
-  await Promise.resolve();
-  assert.equal(resumed, false);
-
+  const waiting = controller.waitUntilRunnable().then(() => { resumed = true; });
   controller.setContinuous(true);
-  await waiting;
+  controller.setJobs(2); // A wake from another control must still respect the idle state.
+  await new Promise(resolve => setImmediate(resolve));
   assert.equal(controller.continuousEnabled, true);
-  assert.equal(resumed, true);
+  assert.equal(controller.canRepeat, false);
+  assert.equal(resumed, false);
+  controller.selectScenario("chosen");
+  await waiting;
+  assert.equal(controller.canRepeat, true);
+});
+
+test("repeat can be enabled during an active trial, but cannot restart a completed paused run", () => {
+  const controller = new SessionController();
+  controller.setContinuous(false);
+  controller.selectScenario("chosen");
+  controller.takeRequestedScenario();
+  const active = controller.beginTrial("active");
+  controller.setContinuous(true);
+  assert.equal(active.aborted, false);
+  controller.finishTrial("active", active);
+  assert.equal(controller.canRepeat, true);
+
+  const last = controller.beginTrial("last");
+  controller.setContinuous(false);
+  controller.finishTrial("last", last);
+  controller.setContinuous(true);
+  assert.equal(controller.canRepeat, false);
 });
 
 test("selection allows one trial while repetition is paused", async () => {

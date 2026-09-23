@@ -27,7 +27,12 @@ export class SessionController {
   #scheduleChanged = false;
   #menuRequested = false;
   #continuousEnabled = true;
+  // Headless sessions start immediately. Once idle, only an explicit selection
+  // starts work again; changing the repeat preference must not leave the menu.
+  #awaitingSelection = false;
   #singleScenarioEnabled = false;
+  #autoStartEnabled = true;
+  #preparedStart: { trialId: string; release: () => void } | undefined;
   #jobs = 1;
   readonly #scheduleWaiters = new Set<() => void>();
   readonly #changeListeners = new Set<() => void>();
@@ -55,8 +60,47 @@ export class SessionController {
     return this.#continuousEnabled;
   }
 
+  get canRepeat(): boolean {
+    return this.#continuousEnabled && !this.#awaitingSelection;
+  }
+
   get singleScenarioEnabled(): boolean {
     return this.#singleScenarioEnabled;
+  }
+
+  get autoStartEnabled(): boolean { return this.#autoStartEnabled; }
+  get awaitingStartTrialId(): string | undefined { return this.#preparedStart?.trialId; }
+
+  /** Enabling auto-start also releases the scenario currently being inspected. */
+  setAutoStart(enabled: boolean): void {
+    this.#autoStartEnabled = enabled;
+    if (enabled) this.#preparedStart?.release();
+  }
+
+  /** A start click belongs to this prepared trial, never to a future selection. */
+  startPreparedTrial(trialId: string): boolean {
+    if (this.#preparedStart?.trialId !== trialId) return false;
+    this.#preparedStart.release();
+    return true;
+  }
+
+  /** Only the watched worker waits here, after connection and before unfreezing. */
+  async waitForStart(trialId: string, signal: AbortSignal): Promise<void> {
+    signal.throwIfAborted();
+    if (this.#autoStartEnabled) return;
+    if (this.#preparedStart) throw new Error("A watched trial is already waiting to start");
+    const gate = Promise.withResolvers<void>();
+    const pending = { trialId, release: gate.resolve };
+    const cancel = () => gate.resolve();
+    this.#preparedStart = pending;
+    signal.addEventListener("abort", cancel, { once: true });
+    try {
+      await gate.promise;
+      signal.throwIfAborted();
+    } finally {
+      signal.removeEventListener("abort", cancel);
+      if (this.#preparedStart === pending) this.#preparedStart = undefined;
+    }
   }
 
   get selectedCategory(): string | undefined {
@@ -88,6 +132,7 @@ export class SessionController {
   /** Leave the current world while keeping the catalog and client alive. */
   returnToMenu(): void {
     this.#continuousEnabled = false;
+    this.#awaitingSelection = true;
     this.#requestedScenario = undefined;
     this.#requestedCount = 0;
     this.#batchRemaining = 0;
@@ -115,6 +160,7 @@ export class SessionController {
   }
 
   selectScenario(name: string): void {
+    this.#awaitingSelection = false;
     this.#requestedScenario = name;
     this.#requestedCount = this.#jobs;
     this.#batchRemaining = 0;
@@ -124,6 +170,7 @@ export class SessionController {
   }
 
   selectCategory(category: string | undefined): void {
+    this.#awaitingSelection = false;
     this.#selectedCategory = category;
     this.#requestedScenario = undefined;
     this.#requestedCount = 0;
@@ -136,9 +183,12 @@ export class SessionController {
 
   setContinuous(enabled: boolean): void {
     this.#continuousEnabled = enabled;
-    if (!enabled) this.#batchRemaining = 0;
+    if (!enabled) {
+      this.#batchRemaining = 0;
+      if (this.#activeTrials.size === 0) this.#awaitingSelection = true;
+    }
     this.#notifyScheduleChange();
-    if (enabled) this.#wakeScheduler();
+    if (this.canRepeat) this.#wakeScheduler();
   }
 
   setSingleScenario(enabled: boolean): void {
@@ -168,7 +218,7 @@ export class SessionController {
 
   /** Wait while repetition is paused; queued selections and batches can still run. */
   async waitUntilRunnable(workerIndex = 0): Promise<void> {
-    while (!this.signal.aborted && (workerIndex >= this.#jobs || (!this.#continuousEnabled && !this.#requestedScenario && !this.#scheduleChanged && !this.#menuRequested && this.#batchRemaining === 0))) {
+    while (!this.signal.aborted && (workerIndex >= this.#jobs || (!this.canRepeat && !this.#requestedScenario && !this.#scheduleChanged && !this.#menuRequested && this.#batchRemaining === 0))) {
       await new Promise<void>((resolve) => this.#scheduleWaiters.add(resolve));
     }
   }
@@ -178,11 +228,13 @@ export class SessionController {
     const trial = new AbortController();
     if (this.signal.aborted) trial.abort("stop");
     this.#activeTrials.set(trialId, trial);
+    this.#awaitingSelection = false;
     return trial.signal;
   }
 
   finishTrial(trialId: string, signal: AbortSignal): void {
     if (this.#activeTrials.get(trialId)?.signal === signal) this.#activeTrials.delete(trialId);
+    if (this.#activeTrials.size === 0 && !this.#continuousEnabled) this.#awaitingSelection = true;
   }
 
   #cancelActiveTrials(reason: TrialCancellation): void {

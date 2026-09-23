@@ -84,6 +84,21 @@ final class LabApiClient {
         sendControl(body);
     }
 
+    synchronized void setAutoStart(boolean enabled) {
+        JsonObject body = new JsonObject();
+        body.addProperty("action", "auto-start");
+        body.addProperty("enabled", enabled);
+        sendControl(body);
+    }
+
+    synchronized void startScenario() {
+        if (snapshot.awaitingStartTrialId().isBlank()) return;
+        JsonObject body = new JsonObject();
+        body.addProperty("action", "start");
+        body.addProperty("trialId", snapshot.awaitingStartTrialId());
+        sendControl(body);
+    }
+
     synchronized void setSingleScenario(boolean enabled) {
         JsonObject body = new JsonObject();
         body.addProperty("action", "single");
@@ -271,6 +286,7 @@ final class LabApiClient {
                 string(root, "phase", "waiting"),
                 string(root, "message", "Mine Labs is ready"),
                 bool(root, "continuousEnabled", true),
+                bool(root, "autoStartEnabled", true), string(root, "awaitingStartTrialId", ""),
                 bool(root, "singleScenarioEnabled", false),
                 string(root, "selectedCategory", null),
                 List.copyOf(scenarios), Map.copyOf(scenarioTags),
@@ -327,6 +343,7 @@ final class LabApiClient {
             String phase,
             String message,
             boolean continuousEnabled,
+            boolean autoStartEnabled, String awaitingStartTrialId,
             boolean singleScenarioEnabled,
             String selectedCategory,
             List<String> scenarios, Map<String, List<String>> scenarioTags,
@@ -339,7 +356,7 @@ final class LabApiClient {
         List<String> tagsFor(String scenario) { return scenarioTags.getOrDefault(scenario, List.of()); }
 
         static Snapshot offline(String message) {
-            return new Snapshot(false, "offline", message, false, false, null, List.of(), Map.of(), List.of(), null, new Totals(0, 0, 0, 0), List.of(), List.of(), null, "", 1, 1, 0);
+            return new Snapshot(false, "offline", message, false, true, "", false, null, List.of(), Map.of(), List.of(), null, new Totals(0, 0, 0, 0), List.of(), List.of(), null, "", 1, 1, 0);
         }
     }
 

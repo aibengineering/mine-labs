@@ -12,6 +12,32 @@ import { TrialScheduler } from "../session/run.js";
 import type { GoalResult } from "../trial/goals.js";
 import type { ScenarioInspection } from "../scenario/inspection.js";
 
+test("manual start API reports ready and rejects stale or malformed start requests", async () => {
+  const root = await mkdtemp(join(tmpdir(), "mine-labs-manual-start-"));
+  const controller = new SessionController();
+  const server = await startUiServer({ controller, rootDir: root, port: 0 });
+  const post = (body: object) => fetch(`http://127.0.0.1:${server.port}/api/control`, {
+    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
+  });
+  try {
+    assert.equal(server.snapshot().autoStartEnabled, true);
+    assert.equal((await post({ action: "auto-start", enabled: false })).status, 422);
+    server.onSessionStart({ scenarios: [], spectator: { username: "Observer" }, jobs: 1 });
+    assert.equal((await post({ action: "auto-start", enabled: "false" })).status, 400);
+    assert.equal((await post({ action: "auto-start", enabled: false })).status, 202);
+    const pending = controller.waitForStart("prepared", controller.beginTrial("prepared"));
+    assert.equal(server.snapshot().phase, "ready");
+    assert.equal(server.snapshot().awaitingStartTrialId, "prepared");
+    assert.equal((await post({ action: "start" })).status, 400);
+    assert.equal((await post({ action: "start", trialId: "old" })).status, 409);
+    assert.equal((await post({ action: "start", trialId: "prepared" })).status, 202);
+    await pending;
+    assert.equal(server.snapshot().awaitingStartTrialId, null);
+    assert.equal(server.snapshot().autoStartEnabled, false);
+    assert.equal((await post({ action: "start", trialId: "prepared" })).status, 409);
+  } finally { controller.stop(); await server.close(); await rm(root, { recursive: true, force: true }); }
+});
+
 test("parallelism is bounded and changes only between active batches", async () => {
   const root = await mkdtemp(join(tmpdir(), "mine-labs-jobs-"));
   const controller = new SessionController();
@@ -396,3 +422,27 @@ async function writeResult(root: string, directory: string, scenario: string, ou
     }),
   );
 }
+
+test("Keep running API toggles preserve the menu until a scenario is selected", async () => {
+  const root = await mkdtemp(join(tmpdir(), "mine-labs-repeat-toggle-"));
+  const controller = new SessionController();
+  controller.setContinuous(false);
+  const server = await startUiServer({ controller, rootDir: root, port: 0 });
+  const post = (body: object) => fetch(`http://127.0.0.1:${server.port}/api/control`, {
+    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
+  });
+  try {
+    server.onSessionStart({ scenarios: [{ name: "first", category: "test" }, { name: "chosen", category: "test" }], spectator: { username: "Observer" }, jobs: 1 });
+    for (const enabled of [true, false, true]) {
+      assert.equal((await post({ action: "continuous", enabled })).status, 202);
+      assert.equal(server.snapshot().continuousEnabled, enabled);
+      assert.equal(server.snapshot().phase, "paused");
+      assert.equal(server.snapshot().connection, null);
+      assert.equal(controller.canRepeat, false);
+    }
+    assert.equal((await post({ action: "select", scenario: "chosen" })).status, 202);
+    assert.equal(controller.takeRequestedScenario(), "chosen");
+    assert.equal(controller.canRepeat, true);
+    assert.equal(server.snapshot().phase, "preparing");
+  } finally { await server.close(); await rm(root, { recursive: true, force: true }); }
+});

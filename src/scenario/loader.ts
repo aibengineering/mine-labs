@@ -68,6 +68,18 @@ export async function loadScenario(file: string): Promise<Scenario> {
       throw validationError("template", templatePath, validatedTemplate.error.issues, file);
     }
     templateFields = validatedTemplate.data;
+    if (templateFields.spectator) {
+      templateFields.spectator.mods = templateFields.spectator.mods.map((mod) => ({
+        ...mod, path: resolve(dirname(templatePath), mod.path),
+      }));
+    }
+  }
+
+  // Unlike client.cwd, a mod is an asset owned by the YAML that declares it.
+  if (scenarioFields.spectator) {
+    scenarioFields.spectator.mods = scenarioFields.spectator.mods.map((mod) => ({
+      ...mod, path: resolve(dirname(path), mod.path),
+    }));
   }
 
   const parsed = scenarioSchema.safeParse({ ...templateFields, ...scenarioFields });

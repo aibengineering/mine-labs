@@ -174,8 +174,8 @@ export class TrialScheduler {
       ? this.options.scenarios.filter(entry => (entry.category ?? "other") === controller.selectedCategory)
       : this.options.scenarios;
     if (!schedule.length) return undefined;
-    if (controller && !controller.continuousEnabled && !pending?.requested && !pending?.changed && !pending?.batch) return undefined;
-    const repeat = controller?.continuousEnabled && controller.singleScenarioEnabled && !pending?.changed
+    if (controller && !controller.canRepeat && !pending?.requested && !pending?.changed && !pending?.batch) return undefined;
+    const repeat = controller?.canRepeat && controller.singleScenarioEnabled && !pending?.changed
       ? this.#lastClaimed.get(0) : undefined;
     const selected = pending?.requested ?? repeat;
     if (selected) {
@@ -197,7 +197,7 @@ export class TrialScheduler {
     // The suite cursor already points past the running trial. Pin the actual
     // worker selection when single-test repetition is enabled mid-flight.
     const requested = this.options.controller?.takeRequestedScenario() ??
-      (this.options.controller?.continuousEnabled && this.options.controller.singleScenarioEnabled
+      (this.options.controller?.canRepeat && this.options.controller.singleScenarioEnabled
         ? this.#lastClaimed.get(workerIndex) : undefined);
     const selectedCategory = this.options.controller?.selectedCategory;
     const schedule = selectedCategory
@@ -206,7 +206,7 @@ export class TrialScheduler {
     if (schedule.length === 0) throw new Error(`no scenarios found in category '${selectedCategory}'`);
     if (scheduleChanged) this.options.controller?.queueBatch(schedule.length);
     const batch = this.options.controller?.takeBatchPermit();
-    if (this.options.controller && !this.options.controller.continuousEnabled && !requested && !batch) return { kind: "wait" };
+    if (this.options.controller && !this.options.controller.canRepeat && !requested && !batch) return { kind: "wait" };
     if (this.#scenarioIndex >= schedule.length) this.#scenarioIndex = 0;
 
     let oneOff: SessionScenario | undefined;
@@ -240,7 +240,7 @@ export class TrialScheduler {
         this.#cycle,
         this.#scenarioIndex,
         schedule.length,
-        Boolean(this.options.controller?.continuousEnabled && this.options.controller.singleScenarioEnabled),
+        Boolean(this.options.controller?.canRepeat && this.options.controller.singleScenarioEnabled),
       ));
     }
     return { kind: "trial", entry, context };

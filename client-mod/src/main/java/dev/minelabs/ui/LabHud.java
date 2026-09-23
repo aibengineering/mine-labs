@@ -36,9 +36,14 @@ final class LabHud {
         if (snapshot.active() != null) {
             LabApiClient.Active active = snapshot.active();
             lines.add(new Line(
-                    "Running  " + active.scenario() + "  /  " + (active.scenarioIndex() + 1) + "/" + active.scenarioCount(),
+                    (snapshot.phase().equals("ready") ? "Ready    " : "Scenario ") + active.scenario() + "  /  " + (active.scenarioIndex() + 1) + "/" + active.scenarioCount(),
                     TEXT));
-            lines.add(new Line("Cycle    " + active.cycle() + "  /  elapsed " + age(active.startedAt()), MUTED));
+            if (snapshot.phase().equals("ready")) {
+                lines.add(new Line("World paused; fly around to inspect", MUTED));
+                lines.add(new Line("Start scenario  " + ClientEvents.startKeyLabel(), GOOD));
+            } else if (snapshot.phase().equals("running")) {
+                lines.add(new Line("Cycle    " + active.cycle() + "  /  elapsed " + age(active.startedAt()), MUTED));
+            }
             if (!active.goalText().isBlank()) {
                 lines.add(new Line("Details  " + ClientEvents.detailsKeyLabel(), GOOD));
             }

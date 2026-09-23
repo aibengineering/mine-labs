@@ -18,6 +18,10 @@ import { posToCommand } from "../scenario/schema.js";
 import { inDimension, resourceId } from "../util/minecraft.js";
 
 const MINECRAFT_TAG = /^[A-Za-z0-9_.+-]+$/u;
+const EQUIPMENT_SLOTS = {
+  head: "armor.head", chest: "armor.chest", legs: "armor.legs", feet: "armor.feet",
+  mainhand: "weapon.mainhand", offhand: "weapon.offhand",
+} as const;
 
 export interface PlayerCommandHost {
   command(command: string): Promise<string>;
@@ -38,47 +42,78 @@ export interface PreparePlayerForTrialOptions {
 export async function preparePlayerForTrial(options: PreparePlayerForTrialOptions): Promise<void> {
   const { commands, player } = options;
   if (options.resetReusablePlayer) await resetReusablePlayer(commands, player.name);
+  // Equip first so a main-hand declaration cannot overwrite an inventory grant.
+  for (const [slot, item] of Object.entries(player.equipment ?? {})) {
+    const target = EQUIPMENT_SLOTS[slot as keyof typeof EQUIPMENT_SLOTS];
+    await commands.command(`item replace entity ${player.name} ${target} with ${resourceId(item)} 1`);
+  }
   for (const stack of player.inventory) {
     await commands.command(`give ${player.name} ${resourceId(stack.item)} ${stack.count}`);
   }
   if (player.op) await commands.command(`op ${player.name}`);
-  if (options.resetReusablePlayer) await restoreReusablePlayerVitals(commands, player.name);
-  // After the vitals restore, so a reused body is wounded from full health
-  // rather than from whatever the last trial left it with, and before the
-  // teleport: for a moment after a change of dimension the player is in
-  // neither level, and a command aimed at it then finds nobody. Magic damage
-  // ignores armour, so the declared inventory cannot change the result.
+  const teleport = player.pos
+    ? inDimension(options.dimension ?? "overworld", `tp ${player.name} ${posToCommand(player.pos)}`)
+    : null;
+  if (options.resetReusablePlayer) {
+    // Still a spectator, so the rejoin cell cannot burn or hurt it on the way out.
+    if (teleport) await commands.command(teleport);
+    await returnReusablePlayer(commands, player.name);
+    // After the vitals restore, so a reused body is wounded from full health
+    // rather than from whatever the last trial left it with.
+    await woundToDeclaredHealth(commands, player);
+    return;
+  }
+  // Before the teleport: for a moment after a change of dimension the player
+  // is in neither level, and a command aimed at it then finds nobody.
+  await woundToDeclaredHealth(commands, player);
+  if (teleport) await commands.command(teleport);
+}
+
+/** Magic damage ignores armour, so the declared inventory cannot change the result. */
+async function woundToDeclaredHealth(commands: PlayerCommandHost, player: PlayerSpec): Promise<void> {
   if (player.health !== undefined && player.health < 20) {
     await commands.command(`damage ${player.name} ${20 - player.health} minecraft:magic`);
   }
-  if (player.pos) {
-    await commands.command(inDimension(options.dimension ?? "overworld", `tp ${player.name} ${posToCommand(player.pos)}`));
-  }
 }
 
+/**
+ * A reused server keeps the player's body across trials, and it rejoins where
+ * the last trial left it — a cell the restored arena may have filled with lava
+ * again. Lava fire is entity NBT that `effect clear` cannot touch, and vanilla
+ * refuses `/data merge` on players. Spectator mode first: a spectator takes no
+ * lava damage, catches no fire, and its fire goes out within a few ticks.
+ */
 async function resetReusablePlayer(commands: PlayerCommandHost, name: string): Promise<void> {
+  await commands.command(`gamemode spectator ${name}`);
   await commands.command(`clear ${name}`);
   await commands.command(`effect clear ${name}`);
-  await commands.command(`gamemode survival ${name}`);
   await commands.command(`deop ${name}`);
   const listed = await commands.command(`tag ${name} list`);
   for (const tag of parseListedTags(listed)) await commands.command(`tag ${name} remove ${tag}`);
 }
 
+const RETURN_POLL_ATTEMPTS = 100;
+const RETURN_POLL_MS = 50;
+
 /**
- * A reused server keeps the player's body across trials, so physical state
- * survives too. Lava fire is entity NBT, not a potion effect, so the
- * `effect clear` above cannot touch it — a player that ended one cycle in lava
- * started the next cycle still burning and, on a no-regeneration fixture,
- * already below its own health goal. Reset its `Fire` NBT directly, then
- * restore health and hunger with instant effects that clamp at their
- * maximums. Unlike a temporary water block, this cannot leave flowing water
- * in the scenario world.
+ * Back to survival once the body is found and no longer burning, then restore
+ * health and hunger with instant effects that clamp at their maximums: lost
+ * health never regenerates on no-regeneration fixtures. Reading `Fire` also
+ * waits out a change of dimension, during which the player cannot be found.
  */
-async function restoreReusablePlayerVitals(commands: PlayerCommandHost, name: string): Promise<void> {
+async function returnReusablePlayer(commands: PlayerCommandHost, name: string): Promise<void> {
+  for (let attempt = 1; ; attempt += 1) {
+    const answer = await commands.command(`data get entity ${name} Fire`);
+    const ticks = /(-?\d+)s\s*$/u.exec(answer.trim())?.[1];
+    if (ticks !== undefined && Number(ticks) <= 0) break;
+    if (attempt >= RETURN_POLL_ATTEMPTS) {
+      throw new Error(`${name} could not return to survival after ${RETURN_POLL_ATTEMPTS * RETURN_POLL_MS} ms: ${answer}`);
+    }
+    await new Promise((resolve) => setTimeout(resolve, RETURN_POLL_MS));
+  }
+  await commands.command(`gamemode survival ${name}`);
   await commands.command(`effect give ${name} minecraft:instant_health 1 9 true`);
   await commands.command(`effect give ${name} minecraft:saturation 1 9 true`);
-  await commands.command(`data merge entity ${name} {Fire:0s}`);
 }
 
 /** Parse both bracketed older responses and Minecraft 1.21.4's comma-separated tag response. */

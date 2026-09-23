@@ -27,7 +27,7 @@ cd my-minecraft-tests
 bun add --dev git+https://github.com/aibengineering/mine-labs.git
 bun run mine-labs init
 bun add mineflayer mineflayer-pathfinder
-bun run mine-labs run --client scenarios
+bun run mine-labs run --spectator scenarios
 ```
 
 After installing, you can also invoke the local CLI with Bun's package runner:
@@ -48,7 +48,7 @@ git clone https://github.com/aibengineering/mine-labs.git
 cd mine-labs
 bun install --frozen-lockfile
 bun run dev doctor
-bun run dev run --client examples/scenarios
+bun run dev run --spectator examples/scenarios
 ```
 
 Choose **beacon-walk** or **zombie-hunt** in the dashboard to run an example.
@@ -68,13 +68,13 @@ with or approved by Mojang or Microsoft.
 The examples below use a repository checkout (`bun run dev`). In an installed
 project, use `bun run mine-labs` instead and point it at your `scenarios` folder.
 
-With `--client`, `run` opens the dashboard. A folder lets you choose a scenario;
+With `--spectator`, `run` opens the dashboard. A folder lets you choose a scenario;
 a single file starts that scenario. F10 opens the dashboard in-game. Inspect the
 result, run it again, or select another scenario. **Return to Labs** closes the
 active world and keeps the dashboard open; closing Minecraft or pressing Ctrl+C
 stops the session.
 
-Without `--client`, the same scenarios run from the terminal:
+Without `--spectator`, the same scenarios run from the terminal:
 
 ```bash
 bun run dev run examples/scenarios/beacon-walk.yaml
@@ -92,7 +92,7 @@ The terminal prints each outcome and results path. A completed headless session
 exits with code 0 when every trial passes, or 1 if a trial fails, times out,
 errors, or is cancelled. Ctrl+C exits with code 130.
 
-In client mode, the observed worker prepares one fresh server ahead while the
+In spectator mode, the observed worker prepares one fresh server ahead while the
 current scenario runs. It freezes world ticking before setup and holds the
 prepared world until that scenario is selected. Bots then join and prepare;
 the observer connects once they are ready. Then
@@ -101,6 +101,14 @@ stale preparation; stopping closes both servers. This uses up to one extra serve
 
 Headless workers and the other parallel workers reuse compatible, resettable
 worlds. Add `--isolated` when every attempt must start in a fresh world.
+
+Keep running is a repeat preference: toggling it while idle stays in the menu.
+Choose Repeat: ONE to loop a single scenario, turn Keep running on, then click that
+scenario to start. Run folder / Run all explicitly starts the selected scope.
+While a trial is running, turning Keep running off lets active trials finish;
+turning it on before they finish enables continuation. Once paused, select a
+scenario or folder to start again. Explicit CLI runs (including `--repeat forever`)
+still start immediately.
 
 ## Write your own scenario
 
@@ -127,8 +135,76 @@ To generate another starting example in the current directory:
 
 ```bash
 bun run dev init
-bun run dev run --client scenarios
+bun run dev run --spectator scenarios
 ```
+
+
+### Inspect before starting
+
+**Auto-start: ON** is the default in the managed client. Turn it **OFF** to load
+and inspect the watched scenario before running it. Once ready, the world stays
+frozen, the bot drivers wait for their start signal, and the trial timer has not
+started. Players still tick while frozen, so air, fire, and effects keep changing
+until the scenario starts. Fly around or press **F9** for scenario details, then press **F8** or
+click **Start scenario** in the F10 dashboard. F8 can be rebound in Minecraft's
+Controls settings.
+
+This preference lasts for the session and applies to each watched scenario,
+including repeats. Turning Auto-start back on releases a scenario already waiting.
+Changing it during a run affects the next scenario. **Keep running** separately
+controls whether another trial loads after completion. Background parallel workers
+continue automatically. Return to Labs, selecting another scenario, and stopping
+all cancel the pending start; an old start click cannot release a newer trial.
+
+The loopback API exposes `autoStartEnabled`, `awaitingStartTrialId`, and phase
+`ready`. Use `{"action":"auto-start","enabled":false}` to change the preference
+and `{"action":"start","trialId":"<awaitingStartTrialId>"}` to start that trial
+via `POST /api/control`. A stale or premature start returns HTTP 409.
+
+### Block groups
+
+Use `blocksAt` to require the same block at several explicit world coordinates:
+
+```yaml
+goal:
+  kind: blocksAt
+  block: stone
+  positions: [[0, 64, 0], [1, 64, 0], [2, 64, 0]]
+```
+
+Every position must match. Mine Labs checks the server's world in the scenario's
+dimension and reports how many positions match and the coordinates that do not.
+The list must contain at least one coordinate triple. `blockAt` remains available
+for a single position. Both block goals require integer cell coordinates;
+player positions and `reach` goals may use fractional coordinates.
+
+Combine several `blocksAt` goals under `kind: all` for different block types,
+including `air` where space must be clear. The scenario owns the coordinates and
+what they represent; Mine Labs has no built-in structure shapes. Add a `completion`
+goal when client action calls must also report success.
+
+### Starting equipment
+
+Declare worn or held items under a player's `equipment`, separately from carried
+`inventory`. Mine Labs equips them during player preparation, before activating
+scenario entities or sending the client its start signal:
+
+```yaml
+players:
+  - name: Barterer
+    inventory:
+      - { item: gold_ingot, count: 3 }
+    equipment:
+      head: golden_helmet
+```
+
+Supported slots are `head`, `chest`, `legs`, `feet`, `mainhand`, and `offhand`.
+Each entry grants one item directly into that slot; do not also list it in
+inventory unless a spare is intended. Equipment is applied after reusable-player
+cleanup and before inventory grants, so a held item cannot overwrite a grant.
+The scenario details screen includes this starting equipment.
+
+Additional viewer mods are declared with `spectator.mods` in a scenario or template; see [Spectator mods](docs/reference.md#spectator-mods). The YAML `client` remains the external scenario participant.
 
 ## Results and local settings
 

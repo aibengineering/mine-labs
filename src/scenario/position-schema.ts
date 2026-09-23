@@ -19,6 +19,13 @@ import { z } from "zod";
 export const absolutePosSchema = z.tuple([z.number(), z.number(), z.number()]);
 export type AbsolutePos = z.infer<typeof absolutePosSchema>;
 
+// Block observations address whole cells; player positions may remain fractional.
+export const blockPosSchema = z.tuple([
+  z.number().int().safe(),
+  z.number().int().safe(),
+  z.number().int().safe(),
+]);
+
 /** A precise position or raw Minecraft command coordinates such as `~ ~1 ~`. */
 export const posSchema = z.union([absolutePosSchema, z.string()]);
 export type Pos = z.infer<typeof posSchema>;

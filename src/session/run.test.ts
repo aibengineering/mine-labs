@@ -229,3 +229,31 @@ test("enabling single with parallel workers retains each worker's actual scenari
     assert.equal(next.context.scenario, name);
   }
 });
+
+test("menu repeat toggles never claim or prepare a scenario before an explicit selection", () => {
+  for (const selectFolder of [false, true]) {
+    const controller = new SessionController();
+    controller.setContinuous(false);
+    controller.setSingleScenario(!selectFolder);
+    const scheduler = createScheduler([scenario("first"), scenario("chosen")], Infinity, controller);
+    for (const enabled of [true, false, true]) {
+      controller.setContinuous(enabled);
+      assert.equal(scheduler.peek(), undefined);
+      assert.equal(scheduler.claim(0).kind, "wait");
+    }
+    if (selectFolder) controller.selectCategory("test");
+    else controller.selectScenario("chosen");
+    const names = [];
+    for (let index = 0; index < 3; index++) {
+      const claim = scheduler.claim(0);
+      assert.equal(claim.kind, "trial");
+      names.push(claim.context.scenario);
+    }
+    assert.deepEqual(names, selectFolder ? ["first", "chosen", "first"] : ["chosen", "chosen", "chosen"]);
+    controller.returnToMenu();
+    assert.equal(scheduler.claim(0).kind, "menu");
+    controller.setContinuous(true);
+    assert.equal(scheduler.peek(), undefined);
+    assert.equal(scheduler.claim(0).kind, "wait");
+  }
+});

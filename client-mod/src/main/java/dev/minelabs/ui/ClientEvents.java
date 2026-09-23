@@ -35,6 +35,18 @@ final class ClientEvents {
 
     static String detailsKeyLabel() { return OPEN_DETAILS.getTranslatedKeyMessage().getString(); }
 
+    private static final KeyMapping START_SCENARIO = new KeyMapping(
+            "key.mine_labs_ui.start", InputConstants.Type.KEYSYM, GLFW.GLFW_KEY_F8,
+            "key.categories.mine_labs_ui");
+
+    static String startKeyLabel() { return START_SCENARIO.getTranslatedKeyMessage().getString(); }
+
+    static void startScenario() {
+        if (API.snapshot().awaitingStartTrialId().isBlank() || API.pendingAction() != null) return;
+        API.startScenario();
+        Minecraft.getInstance().setScreen(null);
+    }
+
     private static void toggleDetails() {
         Minecraft minecraft = Minecraft.getInstance();
         if (minecraft.screen instanceof LabDetailsScreen details) { details.onClose(); return; }
@@ -55,6 +67,7 @@ final class ClientEvents {
     static void registerKeyMappings(RegisterKeyMappingsEvent event) {
         event.register(OPEN_DASHBOARD);
         event.register(OPEN_DETAILS);
+        event.register(START_SCENARIO);
     }
 
     @SubscribeEvent
@@ -88,6 +101,11 @@ final class ClientEvents {
 
     @SubscribeEvent
     public static void onScreenKey(ScreenEvent.KeyPressed.Pre event) {
+        if (START_SCENARIO.matches(event.getKeyCode(), event.getScanCode())) {
+            event.setCanceled(true);
+            startScenario();
+            return;
+        }
         if (OPEN_DETAILS.matches(event.getKeyCode(), event.getScanCode())) {
             event.setCanceled(true);
             toggleDetails();
@@ -152,6 +170,7 @@ final class ClientEvents {
             }
         }
         while (OPEN_DETAILS.consumeClick()) toggleDetails();
+        while (START_SCENARIO.consumeClick()) startScenario();
         while (OPEN_DASHBOARD.consumeClick()) {
             minecraft.setScreen(DASHBOARD);
         }

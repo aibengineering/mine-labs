@@ -44,6 +44,62 @@ const passingObserver: GoalObserver = {
   playerDeaths: async () => 0,
 };
 
+test("blocksAt checks every position in the scenario dimension and identifies mismatches", async () => {
+  const positions: [number, number, number][] = [[3, 64, -8], [-10, 12, 4], [5, 90, 20]];
+  const goal = { kind: "blocksAt" as const, block: "minecraft:STONE", positions };
+  const checked: number[][] = [];
+  let wrongPosition: string | undefined;
+  const observer: GoalObserver = {
+    ...passingObserver,
+    blockMatches: async (pos, block, dimension) => {
+      assert.equal(block, "stone");
+      assert.equal(dimension, "the_nether");
+      checked.push([...pos]);
+      return pos.join(",") !== wrongPosition;
+    },
+  };
+  const ctx: GoalContext = { ...context(new Map(), observer), dimension: "the_nether" };
+  assert.equal((await evaluateGoal(goal, ctx)).state, "passed");
+  assert.deepEqual(checked, positions);
+  for (const pos of positions) {
+    checked.length = 0;
+    wrongPosition = pos.join(",");
+    const result = await evaluateGoal(goal, ctx);
+    assert.equal(result.state, "pending");
+    assert.equal(result.detail, `stone: 2/3 positions match; wrong at ${wrongPosition}`);
+    assert.deepEqual(checked, positions);
+  }
+});
+
+test("block goals share integer cell coordinates while reach accepts fractional positions", () => {
+  const parse = (goal: unknown) => scenarioSchema.safeParse({ client: { command: "test" }, goal });
+  for (const kind of ["blockAt", "blocksAt"] as const) {
+    const goalAt = (pos: number[]) => ({
+      kind, block: "stone", ...(kind === "blockAt" ? { pos } : { positions: [pos] }),
+    });
+    assert.ok(parse(goalAt([-3, 60, 0])).success);
+    for (const pos of [[0.5, 60, 0], [0, 60.5, 0], [0, 60, 0.5], [0, 60], [Number.MAX_SAFE_INTEGER + 1, 60, 0]]) {
+      assert.equal(parse(goalAt(pos)).success, false);
+    }
+  }
+  assert.ok(parse({ kind: "reach", pos: [0.5, 60, 0.5] }).success);
+});
+
+test("blocksAt requires a block and a nonempty position list, including within composite goals", () => {
+  const parse = (goal: unknown) => scenarioSchema.safeParse({ client: { command: "test" }, goal });
+  const valid = { kind: "blocksAt", block: "air", positions: [[0, 60, 0]] };
+  assert.ok(parse(valid).success);
+  assert.ok(parse({ kind: "all", goals: [valid] }).success);
+  for (const goal of [
+    { kind: "blocksAt", positions: [[0, 60, 0]] },
+    { ...valid, block: "" },
+    { ...valid, positions: [] },
+  ]) {
+    assert.equal(parse(goal).success, false);
+    assert.equal(parse({ kind: "all", goals: [goal] }).success, false);
+  }
+});
+
 test("completion goals distinguish pending, passed, and terminal failure", async () => {
   const goal = { kind: "completion" as const, who: "Collector" };
 

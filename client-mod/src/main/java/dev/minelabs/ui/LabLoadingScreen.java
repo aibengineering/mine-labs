@@ -29,7 +29,7 @@ final class LabLoadingScreen extends Screen {
         cancel.active = api.pendingAction() == null && !phase.equals("returning");
         if (api.pendingAction() == null && (!api.snapshot().available() || api.controlFailed()
                 || (!phase.equals("preparing") && !phase.equals("returning")))) {
-            minecraft.setScreen(phase.equals("running") && minecraft.level != null ? null : ClientEvents.dashboard());
+            minecraft.setScreen((phase.equals("running") || phase.equals("ready")) && minecraft.level != null ? null : ClientEvents.dashboard());
         }
     }
 

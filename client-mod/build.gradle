@@ -25,6 +25,12 @@ neoForge {
             programArgument System.getenv('MINE_LABS_USERNAME') ?: 'LabSpectator'
             systemProperty 'minelabs.uiUrl', System.getenv('MINE_LABS_UI_URL') ?: 'http://127.0.0.1:25578'
             systemProperty 'minelabs.managed', 'true'
+            def spectatorProperties = file('spectator-properties.json')
+            if (spectatorProperties.exists()) {
+                new groovy.json.JsonSlurper().parse(spectatorProperties).each { key, value ->
+                    systemProperty key, value
+                }
+            }
         }
     }
     mods {

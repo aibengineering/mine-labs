@@ -71,6 +71,9 @@ export function createClientSessionWorker(
         },
         onTrialRunning: async () => {
           if (!preparation.context) throw new Error("Standby trial was not selected");
+          // The observer can inspect the arranged, frozen world before the
+          // existing start handoff releases both world ticks and bot drivers.
+          await options.controller?.waitForStart(preparation.context.trialId, preparation.cancellation.signal);
           await options.observer?.onTrialRunning?.(preparation.context);
           switching = false;
           running = true;

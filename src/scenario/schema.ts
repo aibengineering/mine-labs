@@ -77,6 +77,10 @@ const entitySchema = z.strictObject({
 export type EntitySpec = z.infer<typeof entitySchema>;
 
 const minecraftResourceId = /^(?:[a-z0-9_.-]+:)?[a-z0-9_./-]+$/u;
+const equipmentSchema = z.partialRecord(
+  z.enum(["head", "chest", "legs", "feet", "mainhand", "offhand"]),
+  z.string().regex(minecraftResourceId, "equipment item must be a Minecraft resource id"),
+);
 
 const inventoryItemSchema = z.strictObject({
   item: z.string().regex(minecraftResourceId, "inventory item must be a Minecraft resource id"),
@@ -104,6 +108,8 @@ const playerSpecSchema = z.strictObject({
   pos: posSchema.optional(),
   /** Items Mine Labs gives after reusable-player cleanup and before ctx.start. */
   inventory: z.array(inventoryItemSchema).default([]),
+  /** One item per equipped slot, applied before inventory grants and client start. */
+  equipment: equipmentSchema.optional(),
   /** Grant operator rights to the client player as part of scenario setup. */
   op: z.boolean().default(false),
   /**
@@ -146,6 +152,14 @@ const worldSchema = z.strictObject({
 });
 
 const scenarioFields = {
+  /** Java viewer configuration; unrelated to the external scenario client command. */
+  spectator: z.strictObject({
+    mods: z.array(z.strictObject({
+      id: z.string().regex(/^[a-z][a-z0-9_-]*$/u),
+      path: z.string().min(1).regex(/\.jar$/iu, "spectator mods must be local JAR files"),
+    })).default([]),
+    systemProperties: z.record(z.string().min(1), z.string()).default({}),
+  }).optional(),
   /** Opt in to shared-world verification; horizontal travel envelope around the spawn. */
   verification: z.strictObject({
     radius: z.number().positive().finite(),

@@ -119,16 +119,24 @@ export async function evaluateGoal(goal: GoalCondition, ctx: GoalContext): Promi
       const need = goal.count ?? 1;
       return observed(have >= need, `${wanted}: ${have}/${need}`);
     }
-    /**
-     * Read the world rather than believe a client. A scenario proving that a
-     * client declined to change something needs independently observed evidence, and
-     * the block still standing is exactly that.
-     */
     case "blockAt": {
-      const [x, y, z] = goal.pos;
       const wanted = goal.block.toLowerCase().replace(/^minecraft:/u, "");
-      const matches = await ctx.observer.blockMatches([x, y, z], wanted, ctx.dimension);
-      return observed(matches, `${x},${y},${z} ${matches ? "is" : "is not"} ${wanted}`);
+      const matches = await ctx.observer.blockMatches(goal.pos, wanted, ctx.dimension);
+      return observed(matches, `${goal.pos.join(",")} ${matches ? "is" : "is not"} ${wanted}`);
+    }
+    case "blocksAt": {
+      const wanted = goal.block.toLowerCase().replace(/^minecraft:/u, "");
+      const mismatches: string[] = [];
+      for (const pos of goal.positions) {
+        const matches = await ctx.observer.blockMatches(pos, wanted, ctx.dimension);
+        if (!matches) mismatches.push(pos.join(","));
+      }
+      const matched = goal.positions.length - mismatches.length;
+      const mismatchDetail = mismatches.length > 0 ? `; wrong at ${mismatches.join("; ")}` : "";
+      return observed(
+        mismatches.length === 0,
+        `${wanted}: ${matched}/${goal.positions.length} positions match${mismatchDetail}`,
+      );
     }
     case "health": {
       const player = pickPlayer(ctx, goal);
@@ -205,7 +213,11 @@ export function describeGoal(goal: GoalCondition, indent = 0): string {
       case "hasItem":
         return `have ${goal.count ?? 1}× ${goal.item}`;
       case "blockAt":
-        return `${goal.block} still at ${goal.pos.join(",")}`;
+        return `${goal.block} at ${goal.pos.join(",")}`;
+      case "blocksAt": {
+        const positions = goal.positions.map(pos => pos.join(",")).join("; ");
+        return `${goal.block} at all ${goal.positions.length} positions: ${positions}`;
+      }
       case "health":
         return `health ≥ ${goal.health ?? 1}`;
       case "chat":

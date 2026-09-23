@@ -23,12 +23,12 @@ final class LabScreen extends Screen {
     private static final int BAD = 0xFFFF7070;
     private static final int BAR_BACKGROUND = 0xFF273143;
     private static final int ACTIONS_Y = 52;
-    private static final int TABS_Y = 80;
-    private static final int CATEGORY_Y = 107;
-    private static final int SUMMARY_Y = 136;
-    private static final int SUMMARY_BAR_Y = 150;
-    private static final int TABLE_HEADER_Y = 164;
-    private static final int TABLE_ROWS_Y = 182;
+    private static final int TABS_Y = 108;
+    private static final int CATEGORY_Y = 135;
+    private static final int SUMMARY_Y = 164;
+    private static final int SUMMARY_BAR_Y = 178;
+    private static final int TABLE_HEADER_Y = 192;
+    private static final int TABLE_ROWS_Y = 210;
     private static final int ROW_HEIGHT = 22;
 
     private final LabApiClient api;
@@ -38,6 +38,8 @@ final class LabScreen extends Screen {
     private Map<String, List<String>> displayedTags = Map.of();
     private int page;
     private Button continuousButton;
+    private Button autoStartButton;
+    private Button startButton;
     private Button singleScenarioButton;
     private Button previousPage;
     private Button nextPage;
@@ -99,6 +101,12 @@ final class LabScreen extends Screen {
         addRenderableWidget(Button.builder(tabLabel("Overview", View.OVERVIEW), button -> switchView(View.OVERVIEW))
                 .bounds(contentLeft(), TABS_Y, 100, 20)
                 .build());
+        autoStartButton = addRenderableWidget(Button.builder(Component.literal("Auto-start: ON"), button ->
+                api.setAutoStart(!api.snapshot().autoStartEnabled()))
+                .bounds(center - 153, 80, 130, 20).build());
+        autoStartButton.setTooltip(Tooltip.create(Component.literal("ON starts when the world is ready. OFF lets you inspect the frozen world first. Applies to the watched worker; background workers continue automatically.")));
+        startButton = addRenderableWidget(Button.builder(Component.literal("Start scenario (" + ClientEvents.startKeyLabel() + ")"), button -> ClientEvents.startScenario())
+                .bounds(center - 17, 80, 170, 20).build());
         addRenderableWidget(Button.builder(tabLabel("Recent runs", View.RECENT), button -> switchView(View.RECENT))
                 .bounds(contentLeft() + 106, TABS_Y, 110, 20)
                 .build());
@@ -379,6 +387,9 @@ final class LabScreen extends Screen {
                 && api.pendingAction() == null
                 && !snapshot.phase().equals("stopping")
                 && !snapshot.phase().equals("stopped");
+        autoStartButton.setMessage(Component.literal("Auto-start: " + (snapshot.autoStartEnabled() ? "ON" : "OFF")));
+        autoStartButton.active = continuousButton.active && Boolean.getBoolean("minelabs.managed");
+        startButton.active = continuousButton.active && !snapshot.awaitingStartTrialId().isBlank();
         if (singleScenarioButton != null) {
             singleScenarioButton.setMessage(singleScenarioLabel(snapshot));
             singleScenarioButton.active = continuousButton.active;

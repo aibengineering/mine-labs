@@ -57,12 +57,12 @@ export async function main(argv: string[]): Promise<void> {
       console.log("\nThe generated bot uses Mineflayer and Pathfinder. Install them in this project:");
       console.log(`  ${pc.cyan("bun add mineflayer mineflayer-pathfinder")}`);
       console.log("These are example bot dependencies; your own client chooses its dependencies.");
-      console.log(`\nnext: ${pc.cyan("bun run mine-labs run --client scenarios")}`);
+      console.log(`\nnext: ${pc.cyan("bun run mine-labs run --spectator scenarios")}`);
     });
 
   program.command("run [scenarios...]")
-    .description("run files or folders; add --client for the Mine Labs dashboard")
-    .option("--client", "open the managed NeoForge client")
+    .description("run files or folders; add --spectator for the Mine Labs dashboard")
+    .option("--spectator", "open the managed NeoForge client")
     .option("-j, --jobs <n>", "parallel scenario workers", positiveInteger, 1)
     .option("-r, --repeat <n>", "number of suite passes, or forever", repeatCount, 1)
     .option("--isolated", "always create fresh worlds instead of using safe resets")
@@ -82,7 +82,7 @@ export async function main(argv: string[]): Promise<void> {
       process.on("SIGINT", stop);
       process.on("SIGTERM", stop);
       try {
-        if (opts.client || files.length === 0) {
+        if (opts.spectator || files.length === 0) {
           const clientRoot = command.getOptionValueSource("out") === "default" ? resolve(".mine-labs/open") : resolve(opts.out);
           await openLab({ paths: files.length ? files : ["scenarios"], rootDir: clientRoot,
             preferPort: opts.port, uiPort: opts.uiPort, jobs: opts.jobs, isolated: opts.isolated,

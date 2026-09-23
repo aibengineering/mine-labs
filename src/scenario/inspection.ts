@@ -28,6 +28,7 @@ export function inspectScenario(name: string, scenario: Scenario): ScenarioInspe
       { title: "Players", lines: scenario.players.flatMap(player => [
         `${player.name} | Start: ${player.pos === undefined ? "server spawn / driver setup" : posToCommand(player.pos)}`,
         `Inventory: ${player.inventory.length ? player.inventory.map(item => `${item.count} x ${item.item}`).join(", ") : "none granted"}`,
+        `Equipment: ${Object.entries(player.equipment ?? {}).map(([slot, item]) => `${slot}: ${item}`).join(", ") || "none declared"}`,
       ]) },
       { title: "Entities", lines: scenario.entities.length ? scenario.entities.map(entity =>
         `${entity.type} at ${posToCommand(entity.pos)}${entity.nbt ? ` | ${entity.nbt}` : ""}`) : ["None declared in YAML. The driver may create entities."] },
@@ -56,5 +57,9 @@ function inspectGoal(goal: GoalCondition, firstPlayer: string): InspectionGoal {
     case "entityCount": return {label: `${goal.entity}: count between ${goal.min ?? 0} and ${goal.max ?? "unlimited"}`};
     case "kill": return {label: `No ${goal.target} remaining; at least one must have been observed`};
     case "blockAt": return {label: `${goal.block} at ${goal.pos.join(", ")}`};
+    case "blocksAt": {
+      const positions = goal.positions.map(pos => pos.join(", ")).join("; ");
+      return { label: `${goal.block} at all ${goal.positions.length} positions: ${positions}` };
+    }
   }
 }

@@ -75,11 +75,13 @@ export interface UiSnapshot {
   jobs: number;
   maxJobs: number;
   apiVersion: 1;
-  phase: "starting" | "preparing" | "returning" | "waiting" | "paused" | "running" | "stopping" | "stopped";
+  phase: "starting" | "preparing" | "ready" | "returning" | "waiting" | "paused" | "running" | "stopping" | "stopped";
   connection: SpectatorConnection | null;
   generatedAt: string;
   message: string;
   continuousEnabled: boolean;
+  autoStartEnabled: boolean;
+  awaitingStartTrialId: string | null;
   singleScenarioEnabled: boolean;
   selectedCategory: string | null;
   scenarios: string[];
@@ -156,6 +158,8 @@ export class UiServer implements SessionObserver {
 
   onTrialRunning(context: TrialContext): void {
     if (this.#managed && context.workerIndex !== 0) return;
+    const active = this.#activeTrials.get(context.trialId);
+    if (active) active.startedAt = new Date().toISOString();
     this.#setStatus(`Running ${context.scenario}`, "running");
   }
 
@@ -226,7 +230,7 @@ export class UiServer implements SessionObserver {
   onSessionStart(context: { scenarios: ScenarioSummary[]; spectator?: { username: string }; jobs: number }): void {
     this.#managed = Boolean(context.spectator);
     this.onCatalogChanged(context.scenarios);
-    if (!this.#controller.continuousEnabled) return this.#setStatus("Choose a scenario to run", "paused");
+    if (!this.#controller.canRepeat) return this.#setStatus("Choose a scenario to run", "paused");
     this.#setStatus(
       `Waiting for up to ${context.jobs} trial${context.jobs === 1 ? "" : "s"}`,
       "waiting",
@@ -283,14 +287,17 @@ export class UiServer implements SessionObserver {
 
   snapshot(): UiSnapshot {
     const activeTrials = orderedActiveTrials(this.#activeTrials);
+    const awaitingStartTrialId = this.#controller.awaitingStartTrialId ?? null;
     return {
       apiVersion: 1,
       currentScenario: this.#current?.inspection.name ?? null,
       scenarioTags: Object.fromEntries([...this.#inspections].map(([name, inspection]) => [name, inspection.tags])),
       connection: this.#connection,
-      phase: this.#phase,
+      phase: awaitingStartTrialId ? "ready" : this.#phase,
       generatedAt: new Date().toISOString(),
-      message: this.#message,
+      message: awaitingStartTrialId ? "Ready to inspect; start the scenario when you are ready" : this.#message,
+      autoStartEnabled: this.#controller.autoStartEnabled,
+      awaitingStartTrialId,
       continuousEnabled: this.#controller.continuousEnabled,
       jobs: this.#controller.jobs,
       maxJobs: this.#maxJobs,
@@ -358,6 +365,13 @@ export class UiServer implements SessionObserver {
       json(response, 202, { accepted: true, action: command.action, ...extra });
 
     switch (command.action) {
+      case "auto-start":
+        if (!this.#managed) return json(response, 422, { error: "Auto-start is available with mine-labs run --spectator" });
+        this.#controller.setAutoStart(command.enabled);
+        return accepted({ enabled: command.enabled });
+      case "start":
+        if (!this.#controller.startPreparedTrial(command.trialId)) return json(response, 409, { error: "That scenario is not waiting to start" });
+        return accepted();
       case "jobs":
         if (this.#activeTrials.size > 0 || this.#phase === "preparing" || this.#phase === "returning") return json(response, 409, { error: "Finish the active runs or return to Labs before changing parallelism" });
         if (command.jobs > this.#maxJobs) return json(response, 422, { error: `This session supports up to ${this.#maxJobs} workers` });
@@ -370,13 +384,13 @@ export class UiServer implements SessionObserver {
         this.#controller.setJobs(command.jobs);
         return accepted({ jobs: command.jobs });
       case "refresh": {
-        if (!this.#refreshCatalog) return json(response, 422, { error: "Catalog refresh is available with mine-labs run --client" });
+        if (!this.#refreshCatalog) return json(response, 422, { error: "Catalog refresh is available with mine-labs run --spectator" });
         this.#refreshing ??= this.#refreshCatalog().finally(() => { this.#refreshing = undefined; });
         this.onCatalogChanged(await this.#refreshing);
         return accepted({ count: this.#scenarios.length });
       }
       case "menu":
-        if (!this.#managed) return json(response, 422, { error: "Return to Labs is available with mine-labs run --client" });
+        if (!this.#managed) return json(response, 422, { error: "Return to Labs is available with mine-labs run --spectator" });
         this.#setStatus("Returning to Mine Labs; closing the scenario world", "returning");
         this.#controller.returnToMenu();
         return accepted();
@@ -412,8 +426,8 @@ export class UiServer implements SessionObserver {
           );
         } else {
           this.#setStatus(
-            command.enabled ? "Keep running enabled" : "Keep running is off",
-            command.enabled ? "waiting" : "paused",
+            command.enabled ? "Keep running enabled; choose a scenario or folder to start" : "Keep running is off",
+            this.#controller.canRepeat ? "waiting" : "paused",
           );
         }
         return accepted({ enabled: command.enabled });
@@ -443,6 +457,8 @@ export class UiServer implements SessionObserver {
 }
 
 type ControlCommand =
+  | { action: "auto-start"; enabled: boolean }
+  | { action: "start"; trialId: string }
   | { action: "jobs"; jobs: number }
   | { action: "refresh" }
   | { action: "menu" }
@@ -564,18 +580,19 @@ async function readControl(request: IncomingMessage): Promise<ControlCommand> {
     chunks.push(buffer);
   }
   const value = JSON.parse(Buffer.concat(chunks).toString("utf8")) as Record<string, unknown>;
+  if (value.action === "start" && typeof value.trialId === "string" && value.trialId.length > 0) return { action: "start", trialId: value.trialId };
   if (value.action === "jobs" && typeof value.jobs === "number" && Number.isInteger(value.jobs) && value.jobs > 0) return { action: "jobs", jobs: value.jobs };
   if (value.action === "stop" || value.action === "skip" || value.action === "menu" || value.action === "refresh") return { action: value.action };
   if (value.action === "select" && typeof value.scenario === "string") {
     return { action: "select", scenario: value.scenario };
   }
-  if ((value.action === "continuous" || value.action === "single") && typeof value.enabled === "boolean") {
+  if ((value.action === "continuous" || value.action === "single" || value.action === "auto-start") && typeof value.enabled === "boolean") {
     return { action: value.action, enabled: value.enabled };
   }
   if (value.action === "category" && (value.category === undefined || typeof value.category === "string")) {
     return typeof value.category === "string" ? { action: "category", category: value.category } : { action: "category" };
   }
-  throw new Error("control action must be stop, skip, continuous/single with enabled, select with a scenario, or category");
+  throw new Error("control action must be stop, skip, menu, refresh, jobs, continuous/single/auto-start with enabled, start with trialId, select with a scenario, or category");
 }
 
 function groupCategories(scenarios: ScenarioSummary[]): UiScenarioCategory[] {

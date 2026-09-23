@@ -5,11 +5,13 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { registerManagedChild, terminateProcessTree, waitForChildExit } from "../process/children.js";
 import { lockClientRuntime } from "./runtime-lock.js";
+import { installSpectatorMods, type SpectatorSetup } from "./spectator-mods.js";
 
 export const SPECTATOR_USERNAME = "LabSpectator";
 
 export async function launchSpectatorClient(options: {
   rootDir: string; uiPort: number; log: (message: string) => void;
+  setup: SpectatorSetup;
 }): Promise<{ closed: Promise<void>; stop: () => Promise<void> }> {
   const source = resolve(dirname(fileURLToPath(import.meta.url)), "../../client-mod");
   const runtime = resolve(options.rootDir, "client");
@@ -27,6 +29,8 @@ export async function launchSpectatorClient(options: {
       await cp(join(source, file), join(runtime, file));
     }
     await mkdir(join(runtime, "run"), { recursive: true });
+    await installSpectatorMods(join(runtime, "run", "mods"), options.setup);
+    await writeFile(join(runtime, "spectator-properties.json"), JSON.stringify(options.setup.systemProperties));
     await writeFile(join(runtime, "run", "options.txt"), "onboardAccessibility:false\nguiScale:2\ntutorialStep:none\n", { flag: "wx" })
       .catch((error: unknown) => { if (!(error instanceof Error && "code" in error && error.code === "EEXIST")) throw error; });
     const logFile = await open(join(runtime, "launcher.log"), "w");
