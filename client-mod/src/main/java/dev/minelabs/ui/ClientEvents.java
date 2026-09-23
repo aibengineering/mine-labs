@@ -20,7 +20,13 @@ import org.lwjgl.glfw.GLFW;
 final class ClientEvents {
     private static final LabApiClient API = new LabApiClient();
     private static final LabScreen DASHBOARD = new LabScreen(API);
-    private static final boolean MANAGED = Boolean.getBoolean("minelabs.managed");
+    /**
+     * A managed client is launched by Mine Labs; a player's own client, such as
+     * a phone in Tailscale remote mode, becomes one once it has a saved lab address.
+     */
+    static boolean managed() {
+        return Boolean.getBoolean("minelabs.managed") || !LabConfig.savedUrl().isEmpty();
+    }
     private static boolean openedDashboard;
     private static String connectionId;
     private static final KeyMapping OPEN_DASHBOARD = new KeyMapping(
@@ -72,7 +78,7 @@ final class ClientEvents {
 
     @SubscribeEvent
     public static void onScreenOpening(ScreenEvent.Opening event) {
-        if (MANAGED && !openedDashboard && event.getNewScreen() instanceof TitleScreen) {
+        if (managed() && !openedDashboard && event.getNewScreen() instanceof TitleScreen) {
             openedDashboard = true;
             event.setNewScreen(DASHBOARD);
             MineLabsUiMod.LOGGER.info("Mine Labs dashboard opened");
@@ -83,19 +89,20 @@ final class ClientEvents {
     public static void onScreenInit(ScreenEvent.Init.Post event) {
         if (event.getScreen() instanceof TitleScreen screen) {
             event.addListener(Button.builder(Component.literal("Mine Labs"), button ->
-                    Minecraft.getInstance().setScreen(DASHBOARD))
+                    // A player's own client has nowhere to connect until it is given a lab address.
+                    Minecraft.getInstance().setScreen(managed() ? DASHBOARD : new LabAddressScreen(API, screen)))
                     .bounds(10, 10, 100, 20).build());
         }
         if (event.getScreen() instanceof PauseScreen) {
             event.addListener(Button.builder(Component.literal("Mine Labs (F10)"), button ->
                     Minecraft.getInstance().setScreen(DASHBOARD))
                     .bounds(10, 10, 125, 20).build());
-            if (MANAGED) event.addListener(Button.builder(Component.literal("Return to Labs"), button -> returnToLabs())
+            if (managed()) event.addListener(Button.builder(Component.literal("Return to Labs"), button -> returnToLabs())
                     .bounds(10, 34, 125, 20).build());
             Button teleport = Button.builder(Component.literal("Teleport to bot"), button -> teleportToBot())
                     .bounds(10, 58, 125, 20).build();
             teleport.active = canTeleportToBot();
-            if (MANAGED) event.addListener(teleport);
+            if (managed()) event.addListener(teleport);
         }
     }
 
@@ -118,6 +125,12 @@ final class ClientEvents {
         }
     }
 
+    /** A newly saved address makes this a managed client now, not after a restart. */
+    static void labAddressSaved() {
+        openedDashboard = true;
+        connectionId = null;
+    }
+
     static void returnToLabs() {
         API.control("menu", null);
         Minecraft.getInstance().setScreen(new LabLoadingScreen(API, "Returning to Mine Labs"));
@@ -135,7 +148,7 @@ final class ClientEvents {
     static boolean canTeleportToBot() {
         Minecraft minecraft = Minecraft.getInstance();
         LabApiClient.Connection target = API.snapshot().connection();
-        return MANAGED && target != null && target.id().equals(connectionId)
+        return managed() && target != null && target.id().equals(connectionId)
                 && minecraft.player != null && minecraft.player.isSpectator()
                 && minecraft.getConnection() != null && !target.focusPlayer().isBlank()
                 && minecraft.getConnection().getPlayerInfo(target.focusPlayer()) != null;
@@ -155,7 +168,7 @@ final class ClientEvents {
         Minecraft minecraft = Minecraft.getInstance();
         API.tick();
         LabApiClient.Snapshot snapshot = API.snapshot();
-        if (MANAGED && openedDashboard && snapshot.available()) {
+        if (managed() && openedDashboard && snapshot.available()) {
             LabApiClient.Connection target = snapshot.connection();
             if (target == null && connectionId != null) {
                 connectionId = null;

@@ -31,9 +31,9 @@ const leasedPorts = new Set<number>();
  * connecting rather than binding: Node sets SO_REUSEADDR on Windows, which
  * makes a bind-probe succeed against a port that is actively listening.
  */
-function isFree(port: number): Promise<boolean> {
+function isFree(port: number, host: string): Promise<boolean> {
   const { promise, resolve } = Promise.withResolvers<boolean>();
-  const client = net.connect({ port, host: "127.0.0.1" });
+  const client = net.connect({ port, host });
   client.setTimeout(500);
   client.once("connect", () => {
     client.destroy();
@@ -47,11 +47,11 @@ function isFree(port: number): Promise<boolean> {
   return promise;
 }
 
-export async function reserveFreePortPair(preferred: number): Promise<PortPairLease> {
+export async function reserveFreePortPair(preferred: number, host = "127.0.0.1"): Promise<PortPairLease> {
   for (let p = preferred; p < preferred + 200; p++) {
     const rconPort = p + 1;
     if (leasedPorts.has(p) || leasedPorts.has(rconPort)) continue;
-    if (!(await isFree(p)) || !(await isFree(rconPort))) continue;
+    if (!(await isFree(p, host)) || !(await isFree(rconPort, host))) continue;
     // Another asynchronous claimant may have leased the pair while these
     // connect probes were in flight.
     if (leasedPorts.has(p) || leasedPorts.has(rconPort)) continue;

@@ -446,3 +446,43 @@ test("Keep running API toggles preserve the menu until a scenario is selected", 
     assert.equal(server.snapshot().phase, "preparing");
   } finally { await server.close(); await rm(root, { recursive: true, force: true }); }
 });
+
+test("Tailscale remote mode identifies the watching player and serves its mods and properties", async () => {
+  const root = await mkdtemp(join(tmpdir(), "mine-labs-remote-"));
+  const jar = join(root, "viewer.jar");
+  await writeFile(jar, "jar bytes");
+  const controller = new SessionController();
+  const server = await startUiServer({ controller, rootDir: root, port: 0, remote: {
+    downloads: [{ name: "mine-labs-spectator-viewer.jar", path: jar }],
+    clientProperties: { "viewer.portOffset": "10000" },
+  } });
+  const base = `http://127.0.0.1:${server.port}`;
+  try {
+    const arrived = server.waitForSpectatorName();
+    await fetch(`${base}/api/status`, { headers: { "x-mine-labs-player": "not a name!" } });
+    assert.equal(server.spectatorName, undefined);
+    const status = await (await fetch(`${base}/api/status`, { headers: { "x-mine-labs-player": "PhoneSteve" } })).json() as UiSnapshot;
+    assert.equal(await arrived, "PhoneSteve");
+    assert.deepEqual(status.clientProperties, { "viewer.portOffset": "10000" });
+    const page = await fetch(`${base}/`, { headers: { accept: "text/html" } });
+    assert.match(page.headers.get("content-type") ?? "", /text\/html/u);
+    assert.match(await page.text(), /\/downloads\/mine-labs-spectator-viewer\.jar/u);
+    const download = await fetch(`${base}/downloads/mine-labs-spectator-viewer.jar`);
+    assert.equal(download.status, 200);
+    assert.equal(await download.text(), "jar bytes");
+    assert.equal((await fetch(`${base}/downloads/other.jar`)).status, 404);
+  } finally { controller.stop(); await server.close(); await rm(root, { recursive: true, force: true }); }
+});
+
+test("a loopback lab neither identifies players nor serves downloads", async () => {
+  const root = await mkdtemp(join(tmpdir(), "mine-labs-local-"));
+  const controller = new SessionController();
+  const server = await startUiServer({ controller, rootDir: root, port: 0 });
+  const base = `http://127.0.0.1:${server.port}`;
+  try {
+    const status = await (await fetch(`${base}/api/status`, { headers: { "x-mine-labs-player": "PhoneSteve" } })).json() as UiSnapshot;
+    assert.equal(server.spectatorName, undefined);
+    assert.equal(status.clientProperties, undefined);
+    assert.equal((await fetch(`${base}/downloads/mine-labs-ui.jar`)).status, 404);
+  } finally { controller.stop(); await server.close(); await rm(root, { recursive: true, force: true }); }
+});

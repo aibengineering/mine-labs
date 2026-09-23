@@ -83,13 +83,13 @@ final class LabScreen extends Screen {
                         api.setSingleScenario(!api.snapshot().singleScenarioEnabled()))
                 .bounds(actionLeft + actionWidth + actionGap, ACTIONS_Y, actionWidth, 20)
                 .build());
-        addRenderableWidget(Button.builder(Component.literal(Boolean.getBoolean("minelabs.managed") ? "Return to Labs" : "Skip active"), button -> {
-                    if (Boolean.getBoolean("minelabs.managed")) ClientEvents.returnToLabs();
+        addRenderableWidget(Button.builder(Component.literal(ClientEvents.managed() ? "Return to Labs" : "Skip active"), button -> {
+                    if (ClientEvents.managed()) ClientEvents.returnToLabs();
                     else api.control("skip", null);
                 })
                 .bounds(actionLeft + (actionWidth + actionGap) * 2, ACTIONS_Y, actionWidth, 20)
                 .build());
-        addRenderableWidget(Button.builder(Component.literal(Boolean.getBoolean("minelabs.managed") ? "Exit Labs" : "Stop run"), button -> api.control("stop", null))
+        addRenderableWidget(Button.builder(Component.literal(ClientEvents.managed() ? "Exit Labs" : "Stop run"), button -> api.control("stop", null))
                 .bounds(actionLeft + (actionWidth + actionGap) * 3, ACTIONS_Y, actionWidth, 20)
                 .build());
         jobsButton = addRenderableWidget(Button.builder(Component.literal("Parallel: " + snapshot.jobs()), button -> {
@@ -156,7 +156,13 @@ final class LabScreen extends Screen {
         nextPage = addRenderableWidget(Button.builder(Component.literal(">"), button -> changePage(1))
                 .bounds(center + 38, pageY, 24, 20)
                 .build());
-        if (Boolean.getBoolean("minelabs.managed") && snapshot.connection() != null) {
+        if (!LabConfig.launchedWithUrl() && snapshot.connection() == null) {
+            addRenderableWidget(Button.builder(Component.literal("Lab address"), button ->
+                    minecraft.setScreen(new LabAddressScreen(api, this)))
+                    .bounds(contentLeft(), pageY, 96, 20).build())
+                    .setTooltip(Tooltip.create(Component.literal("Connect to another lab, such as one in Tailscale remote mode.")));
+        }
+        if (ClientEvents.managed() && snapshot.connection() != null) {
             teleportButton = addRenderableWidget(Button.builder(Component.literal("Teleport to bot"), button -> ClientEvents.teleportToBot())
                     .bounds(contentLeft(), pageY, 116, 20).build());
             teleportButton.setTooltip(Tooltip.create(Component.literal("Jump to the first scenario bot's current position and dimension.")));
@@ -388,7 +394,7 @@ final class LabScreen extends Screen {
                 && !snapshot.phase().equals("stopping")
                 && !snapshot.phase().equals("stopped");
         autoStartButton.setMessage(Component.literal("Auto-start: " + (snapshot.autoStartEnabled() ? "ON" : "OFF")));
-        autoStartButton.active = continuousButton.active && Boolean.getBoolean("minelabs.managed");
+        autoStartButton.active = continuousButton.active && ClientEvents.managed();
         startButton.active = continuousButton.active && !snapshot.awaitingStartTrialId().isBlank();
         if (singleScenarioButton != null) {
             singleScenarioButton.setMessage(singleScenarioLabel(snapshot));

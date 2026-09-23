@@ -377,6 +377,31 @@ Search, folder selection, Refresh, scenario inspection, and retained results
 remain available between runs. A stable connection ID identifies a world, so
 the observer reconnects automatically when the next selected server is prepared.
 
+### Tailscale remote mode
+
+`run --tailscale` launches no client. It depends on Tailscale on purpose: it
+binds the control API and every scenario server to this machine's IPv4 tailnet
+address (from `tailscale ip -4`) and to nothing else, and it has no login of
+its own, so your tailnet decides who can reach it. The control API keeps port
+25578 unless `--ui-port` overrides it, so a device can keep its saved address.
+
+A Minecraft client with the Mine Labs mod names its player in an
+`X-Mine-Labs-Player` header on each request. In remote mode the lab waits for
+that name before running, makes it an operator of each new world, and waits for
+it to join. A loopback lab ignores the header.
+
+In remote mode the control API also serves:
+
+| Path | Purpose |
+| --- | --- |
+| `/` (browser) | Setup page with the lab address and mod download links |
+| `/downloads/<file>.jar` | The built Mine Labs mod and the catalog's spectator mods |
+| `clientProperties` in `/api/status` | The catalog's `spectator.systemProperties`, which the mod applies unless the JVM was launched with that property |
+
+The mod saves the address entered on its **Lab address** screen in
+`config/mine_labs_ui.properties`. A saved address makes the client managed, as a
+launched one is: it opens the dashboard at startup and joins each prepared world.
+
 
 
 ## Natural-world verification

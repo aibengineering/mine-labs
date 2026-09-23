@@ -83,6 +83,8 @@ async function downloadServerJar(version: string, dir: string, jar: string, log:
 
 export interface ServerConfig {
   version: string;
+  /** The one address the game and RCON listeners bind to. */
+  host: string;
   worldDir: string;
   rconPort: number;
   gamePort: number;
@@ -114,6 +116,10 @@ export class MinecraftServer {
     return this.cfg.gamePort;
   }
 
+  get host(): string {
+    return this.cfg.host;
+  }
+
   get operatorNames(): readonly string[] {
     return this.cfg.operators.map((operator) => operator.name);
   }
@@ -122,6 +128,8 @@ export class MinecraftServer {
     version: string;
     root: string;
     log: (s: string) => void;
+    /** Loopback unless a remote spectator must reach the game port. */
+    host?: string;
     preferPort?: number;
     worldType?: "flat" | "default";
     seed?: number | string;
@@ -132,9 +140,11 @@ export class MinecraftServer {
     // Validate local configuration before acquiring resources that need release.
     const operators = defaultOperatorProfiles();
     await linkServerRuntime(opts.root, opts.version);
-    const ports = await reserveFreePortPair(opts.preferPort ?? 25565);
+    const host = opts.host ?? "127.0.0.1";
+    const ports = await reserveFreePortPair(opts.preferPort ?? 25565, host);
     const cfg: ServerConfig = {
       version: opts.version,
+      host,
       worldDir: join(opts.root, "world"),
       rconPort: ports.rconPort,
       gamePort: ports.gamePort,
@@ -159,7 +169,7 @@ export class MinecraftServer {
   private async writeConfig(): Promise<void> {
     const lines = [
       // Vanilla uses server-ip for both its game listener and RCON listener.
-      "server-ip=127.0.0.1",
+      `server-ip=${this.cfg.host}`,
       `server-port=${this.cfg.gamePort}`,
       "online-mode=false",
       // Scenario bots must be able to modify fixtures near the generated
@@ -210,7 +220,7 @@ export class MinecraftServer {
     await this.writeConfig();
     const javaName = process.platform === "win32" ? "javaw.exe" : "java";
     const java = process.env.JAVA_HOME ? join(process.env.JAVA_HOME, "bin", javaName) : javaName;
-    this.log(`starting ${this.cfg.version} server on :${this.cfg.gamePort} (rcon :${this.cfg.rconPort})`);
+    this.log(`starting ${this.cfg.version} server on ${this.cfg.host}:${this.cfg.gamePort} (rcon :${this.cfg.rconPort})`);
     this.proc = spawn(java, ["-Xms512M", "-Xmx2G", "-jar", this.jar, "nogui"], {
       cwd: root,
       stdio: ["ignore", "pipe", "pipe"],
@@ -236,7 +246,7 @@ export class MinecraftServer {
         throw new Error(`server exited with code ${this.proc.exitCode} before becoming ready`);
       }
       try {
-        this.rcon = new Rcon("127.0.0.1", this.cfg.rconPort, this.cfg.rconPassword);
+        this.rcon = new Rcon(this.cfg.host, this.cfg.rconPort, this.cfg.rconPassword);
         await this.rcon.connect();
         const out = await this.rcon.command("list");
         if (out !== "") {

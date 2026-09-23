@@ -29,7 +29,10 @@ export interface ScenarioSummary {
 export interface SessionOptions {
   scenarios: SessionScenario[];
   rootDir: string;
-  spectator?: { username: string };
+  /** Read at each world's creation, so a remote spectator's name can arrive after the session starts. */
+  spectator?: { readonly username: string };
+  /** Address every scenario server binds to; loopback unless serving Tailscale remote mode. */
+  host?: string;
   /** Force fresh worlds for isolation comparisons. Safe resets are otherwise automatic. */
   isolated?: boolean;
   /** Client sessions can change concurrency up to this limit while idle. */
@@ -75,7 +78,7 @@ export interface SessionObserver {
 
 export interface SpectatorConnection {
   id: string;
-  host: "127.0.0.1";
+  host: string;
   port: number;
   /** First declared scenario player; also the default spectator viewpoint. */
   focusPlayer?: string;

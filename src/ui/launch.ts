@@ -1,6 +1,6 @@
 /** Launch the package's own NeoForge client, with writable build/game files outside node_modules. */
 import { spawn } from "node:child_process";
-import { cp, mkdir, open, rm, writeFile } from "node:fs/promises";
+import { cp, mkdir, open, readdir, rm, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { registerManagedChild, terminateProcessTree, waitForChildExit } from "../process/children.js";
@@ -9,33 +9,81 @@ import { installSpectatorMods, type SpectatorSetup } from "./spectator-mods.js";
 
 export const SPECTATOR_USERNAME = "LabSpectator";
 
+/** Copy the package's client sources into the writable runtime; the caller holds its lock. */
+async function refreshClientSources(runtime: string): Promise<void> {
+  const source = resolve(dirname(fileURLToPath(import.meta.url)), "../../client-mod");
+  // These package-owned source folders are replaced so removed Java files cannot survive an upgrade.
+  for (const folder of ["src", "gradle"]) {
+    const target = join(runtime, folder);
+    await rm(target, { recursive: true, force: true });
+    await cp(join(source, folder), target, { recursive: true });
+  }
+  for (const file of ["build.gradle", "settings.gradle", "gradle.properties"]) {
+    await cp(join(source, file), join(runtime, file));
+  }
+}
+
+function javaCommand(): string {
+  const javaName = process.platform === "win32" ? "javaw.exe" : "java";
+  return process.env.JAVA_HOME ? join(process.env.JAVA_HOME, "bin", javaName) : javaName;
+}
+
+/**
+ * Build the installable Mine Labs mod JAR for a client Mine Labs does not launch.
+ *
+ * Tailscale remote mode serves it to a player's own launcher. It builds in the
+ * same writable runtime as the managed client, never inside node_modules.
+ */
+export async function buildRemoteClientMod(options: { rootDir: string; log: (message: string) => void }): Promise<string> {
+  const runtime = resolve(options.rootDir, "client");
+  await mkdir(runtime, { recursive: true });
+  const unlock = await lockClientRuntime(runtime);
+  try {
+    await refreshClientSources(runtime);
+    const libs = join(runtime, "build", "libs");
+    await rm(libs, { recursive: true, force: true });
+    const logPath = join(runtime, "build-mod.log");
+    options.log(`building the Mine Labs mod for remote clients; first build downloads NeoForge (log: ${logPath})`);
+    const logFile = await open(logPath, "w");
+    let child;
+    try {
+      child = spawn(javaCommand(), ["-jar", join(runtime, "gradle/wrapper/gradle-wrapper.jar"), "jar", "--no-daemon", "--console=plain"], {
+        cwd: runtime, windowsHide: true, shell: false, stdio: ["ignore", logFile.fd, logFile.fd],
+      });
+      registerManagedChild(child);
+    } finally {
+      await logFile.close();
+    }
+    await new Promise<void>((resolvePromise, reject) => {
+      child.once("error", reject);
+      child.once("close", (code, signal) => code === 0 ? resolvePromise()
+        : reject(new Error(`Mine Labs mod build exited ${code ?? signal}; see ${logPath}`)));
+    });
+    const jar = (await readdir(libs)).filter(name => /^mine-labs-ui-.*\.jar$/u.test(name) && !name.includes("sources")).sort().at(-1);
+    if (!jar) throw new Error(`Mine Labs mod build produced no mine-labs-ui-*.jar; see ${logPath}`);
+    return join(libs, jar);
+  } finally {
+    await unlock();
+  }
+}
+
 export async function launchSpectatorClient(options: {
   rootDir: string; uiPort: number; log: (message: string) => void;
   setup: SpectatorSetup;
 }): Promise<{ closed: Promise<void>; stop: () => Promise<void> }> {
-  const source = resolve(dirname(fileURLToPath(import.meta.url)), "../../client-mod");
   const runtime = resolve(options.rootDir, "client");
   await mkdir(runtime, { recursive: true });
   // One invocation owns this build directory and game instance until its child closes.
   const unlock = await lockClientRuntime(runtime);
   try {
-    // These package-owned source folders are replaced so removed Java files cannot survive an upgrade.
-    for (const folder of ["src", "gradle"]) {
-      const target = join(runtime, folder);
-      await rm(target, { recursive: true, force: true });
-      await cp(join(source, folder), target, { recursive: true });
-    }
-    for (const file of ["build.gradle", "settings.gradle", "gradle.properties"]) {
-      await cp(join(source, file), join(runtime, file));
-    }
+    await refreshClientSources(runtime);
     await mkdir(join(runtime, "run"), { recursive: true });
     await installSpectatorMods(join(runtime, "run", "mods"), options.setup);
     await writeFile(join(runtime, "spectator-properties.json"), JSON.stringify(options.setup.systemProperties));
     await writeFile(join(runtime, "run", "options.txt"), "onboardAccessibility:false\nguiScale:2\ntutorialStep:none\n", { flag: "wx" })
       .catch((error: unknown) => { if (!(error instanceof Error && "code" in error && error.code === "EEXIST")) throw error; });
     const logFile = await open(join(runtime, "launcher.log"), "w");
-    const javaName = process.platform === "win32" ? "javaw.exe" : "java";
-    const java = process.env.JAVA_HOME ? join(process.env.JAVA_HOME, "bin", javaName) : javaName;
+    const java = javaCommand();
     options.log(`opening Mine Labs Minecraft client; first launch downloads NeoForge (log: ${join(runtime, "launcher.log")})`);
     let child;
     try {

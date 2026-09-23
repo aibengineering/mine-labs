@@ -15,18 +15,22 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Properties;
 import java.util.HashMap;
+import net.minecraft.client.Minecraft;
 
 final class LabApiClient {
     private static final String DEFAULT_URL = "http://127.0.0.1:25578";
     private static final long POLL_INTERVAL_MS = 500;
     private static final long FAILURE_GRACE_MS = 2_000;
     private static final int MAX_RESPONSE_CHARS = 1_000_000;
+    /** Properties the JVM was launched with, captured before any lab-supplied value is applied. */
+    private static final Properties LAUNCH_PROPERTIES = (Properties) System.getProperties().clone();
 
     private final HttpClient client = HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(1))
             .build();
-    private final String baseUrl = trimSlash(System.getProperty("minelabs.uiUrl", DEFAULT_URL));
+    private volatile String baseUrl = initialUrl();
     private volatile Snapshot snapshot = Snapshot.offline("waiting for Mine Labs");
     private boolean requestInFlight;
     private long nextPollAt;
@@ -35,6 +39,34 @@ final class LabApiClient {
     private volatile String notice = "";
     private volatile boolean controlFailed;
     private long controlGeneration;
+
+    private static String initialUrl() {
+        if (LabConfig.launchedWithUrl()) return trimSlash(System.getProperty("minelabs.uiUrl"));
+        String saved = LabConfig.savedUrl();
+        return saved.isEmpty() ? DEFAULT_URL : saved;
+    }
+
+    String baseUrl() { return baseUrl; }
+
+    /** Point at another lab, such as one typed into the address screen, and start polling it. */
+    synchronized void setBaseUrl(String url) {
+        baseUrl = trimSlash(url);
+        controlGeneration++;
+        lastSuccessAt = 0;
+        nextPollAt = 0;
+        snapshot = Snapshot.offline("Connecting to " + baseUrl);
+    }
+
+    /**
+     * Every request names the player, so a lab in Tailscale remote mode knows
+     * whom to wait for and make an operator. A loopback lab ignores it.
+     */
+    private HttpRequest.Builder request(String path) {
+        HttpRequest.Builder builder = HttpRequest.newBuilder(URI.create(baseUrl + path));
+        String player = Minecraft.getInstance().getUser().getName();
+        if (player != null && player.matches("[A-Za-z0-9_]{1,16}")) builder.header("X-Mine-Labs-Player", player);
+        return builder;
+    }
 
     String pendingAction() { return pendingAction; }
     String notice() { return notice; }
@@ -45,7 +77,7 @@ final class LabApiClient {
         if (requestInFlight || pendingAction != null || now < nextPollAt) return;
         requestInFlight = true;
         nextPollAt = now + POLL_INTERVAL_MS;
-        HttpRequest request = HttpRequest.newBuilder(URI.create(baseUrl + "/api/status"))
+        HttpRequest request = request("/api/status")
                 .timeout(Duration.ofSeconds(2))
                 .header("Accept", "application/json")
                 .GET()
@@ -61,7 +93,7 @@ final class LabApiClient {
 
     CompletableFuture<JsonObject> inspectScenario(String name, boolean current) {
         String query = current ? "current=true" : "name=" + URLEncoder.encode(name, StandardCharsets.UTF_8);
-        return client.sendAsync(HttpRequest.newBuilder(URI.create(baseUrl + "/api/scenario?" + query))
+        return client.sendAsync(request("/api/scenario?" + query)
                 .timeout(Duration.ofSeconds(5)).GET().build(), HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8))
                 .thenApply(response -> {
                     JsonObject result = JsonParser.parseString(response.body()).getAsJsonObject();
@@ -126,7 +158,7 @@ final class LabApiClient {
         pendingAction = body.get("action").getAsString();
         controlFailed = false;
         notice = pendingAction.equals("refresh") ? "Refreshing scenario files..." : "";
-        HttpRequest request = HttpRequest.newBuilder(URI.create(baseUrl + "/api/control"))
+        HttpRequest request = request("/api/control")
                 .timeout(Duration.ofSeconds(30))
                 .header("Content-Type", "application/json")
                 .POST(HttpRequest.BodyPublishers.ofString(body.toString(), StandardCharsets.UTF_8))
@@ -140,7 +172,7 @@ final class LabApiClient {
                     if (body.get("action").getAsString().equals("refresh")) notice = "Catalog refreshed. Next run uses the latest YAML.";
                     // Read status after acceptance so an older poll cannot erase
                     // the immediate click feedback or briefly show the old run.
-                    return client.sendAsync(HttpRequest.newBuilder(URI.create(baseUrl + "/api/status"))
+                    return client.sendAsync(request("/api/status")
                             .timeout(Duration.ofSeconds(2)).GET().build(),
                             HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
                 })
@@ -184,8 +216,9 @@ final class LabApiClient {
         }
     }
 
-    private static Snapshot parse(String body) {
+    private Snapshot parse(String body) {
         JsonObject root = JsonParser.parseString(body).getAsJsonObject();
+        applyClientProperties(object(root, "clientProperties"));
         List<String> scenarios = new ArrayList<>();
         JsonArray scenarioValues = array(root, "scenarios");
         if (scenarioValues != null) {
@@ -276,7 +309,8 @@ final class LabApiClient {
         Connection connection = connectionValue == null ? null : new Connection(
                 string(connectionValue, "id", ""),
                 string(connectionValue, "host", ""), integer(connectionValue, "port", 0), string(connectionValue, "focusPlayer", ""));
-        if (connection != null && (!connection.host().equals("127.0.0.1")
+        // Only join a world on the lab's own machine: its loopback, or the address this client reached it on.
+        if (connection != null && (!(connection.host().equals("127.0.0.1") || connection.host().equals(URI.create(baseUrl).getHost()))
                 || connection.port() < 1 || connection.port() > 65535 || connection.id().isBlank()
                 || (!connection.focusPlayer().isBlank() && !connection.focusPlayer().matches("[A-Za-z0-9_]{1,16}")))) {
             throw new IllegalArgumentException("invalid Mine Labs connection target");
@@ -295,6 +329,24 @@ final class LabApiClient {
                 totals,
                 List.copyOf(scenarioStats),
                 List.copyOf(recent), connection, string(root, "currentScenario", ""), integer(root, "jobs", 1), integer(root, "maxJobs", 1), array(root, "activeTrials") == null ? 0 : array(root, "activeTrials").size());
+    }
+
+    /**
+     * A remote lab publishes the JVM properties its spectator mods read, since a
+     * player's own launcher was not started with them. A property the JVM was
+     * launched with still wins, and Mine Labs' own keys are never taken from the lab.
+     */
+    private static void applyClientProperties(JsonObject properties) {
+        if (properties == null) return;
+        for (var entry : properties.entrySet()) {
+            String key = entry.getKey();
+            if (key.startsWith("minelabs.") || !entry.getValue().isJsonPrimitive() || LAUNCH_PROPERTIES.containsKey(key)) continue;
+            String value = entry.getValue().getAsString();
+            if (!value.equals(System.getProperty(key))) {
+                System.setProperty(key, value);
+                MineLabsUiMod.LOGGER.info("Mine Labs set {}={} for the lab's spectator mods", key, value);
+            }
+        }
     }
 
     private static JsonObject object(JsonObject parent, String name) {

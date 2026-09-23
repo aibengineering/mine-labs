@@ -18,7 +18,7 @@ test("server config preserves world settings and binds offline play to loopback"
   t.after(() => rm(root, { recursive: true, force: true }));
   for (const structures of [false, true]) {
     const server = new MinecraftServer({
-      version: "1.21.4", worldDir: join(root, "world"), gamePort: 0, rconPort: 0,
+      version: "1.21.4", host: "127.0.0.1", worldDir: join(root, "world"), gamePort: 0, rconPort: 0,
       rconPassword: "test", worldType: "default", seed: 20260906, structures, operators: [],
     }, "unused.jar", () => {}, { gamePort: 0, rconPort: 0, release() {} });
     await server["writeConfig"]();
@@ -28,4 +28,17 @@ test("server config preserves world settings and binds offline play to loopback"
     assert.ok(properties.split("\n").includes("server-ip=127.0.0.1"));
     assert.ok(properties.split("\n").includes("online-mode=false"));
   }
+});
+
+test("server config binds a Tailscale remote mode server to the tailnet address only", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "mine-labs-host-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const server = new MinecraftServer({
+    version: "1.21.4", host: "100.64.0.7", worldDir: join(root, "world"), gamePort: 0, rconPort: 0,
+    rconPassword: "test", worldType: "flat", structures: false, operators: [],
+  }, "unused.jar", () => {}, { gamePort: 0, rconPort: 0, release() {} });
+  await server["writeConfig"]();
+  const properties = (await readFile(join(root, "server.properties"), "utf8")).split("\n");
+  assert.ok(properties.includes("server-ip=100.64.0.7"));
+  assert.equal(server.host, "100.64.0.7");
 });

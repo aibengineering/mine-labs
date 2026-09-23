@@ -138,6 +138,31 @@ bun run dev init
 bun run dev run --spectator scenarios
 ```
 
+### Watch from another device: Tailscale remote mode
+
+To drive and watch the lab from your own Minecraft install, such as a phone
+launcher, run it in Tailscale remote mode instead of `--spectator`:
+
+```bash
+bun run dev run --tailscale examples/scenarios
+```
+
+Remote mode needs [Tailscale](https://tailscale.com) running on this machine and
+on the device. It opens no client here. It serves the dashboard and every scenario
+world on this machine's tailnet address only, and has no login of its own, so
+anyone who can reach that address on your tailnet can run and stop scenarios.
+
+Mine Labs prints the lab address, such as `http://100.101.102.103:25578`. On the
+device:
+
+1. Open that address in a browser and download the mods it lists.
+2. Add them to a NeoForge 1.21.4 instance in your launcher.
+3. Start Minecraft, choose **Mine Labs** on the title screen, and enter the address.
+
+The address is saved, so later launches open the dashboard directly. Use your
+normal account: the lab watches for whichever player the mod reports. Re-download
+the mods when the scenarios' spectator mods change.
+
 
 ### Inspect before starting
 

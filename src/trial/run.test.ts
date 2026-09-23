@@ -97,7 +97,7 @@ test("a prepared world is frozen before setup and cancellation never launches it
     tick: ["say started"], client: { command: "must-not-launch" }, goal: { kind: "completion" },
   });
   const server = {
-    worldDir: join(root, "world"), operatorNames: [], gamePort: 12345,
+    worldDir: join(root, "world"), host: "127.0.0.1", operatorNames: [], gamePort: 12345,
     rcon: {
       command: async (command: string) => { commands.push(command); return ""; },
       executeChecked: async (command: string) => { commands.push(command); return ""; },
@@ -130,7 +130,7 @@ test("world and client gates precede observer arrival, activation, and thaw", as
     client: { command: "bun", args: [resolve("src/client/test-fixtures/protocol-client.mjs")] }, goal: { kind: "completion" },
   });
   const server = {
-    worldDir: join(root, "world"), operatorNames: [], gamePort: 12345,
+    worldDir: join(root, "world"), host: "127.0.0.1", operatorNames: [], gamePort: 12345,
     rcon: {
       command: async (command: string) => { commands.push(command); return ""; },
       executeChecked: async (command: string) => { commands.push(command); return ""; },

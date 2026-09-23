@@ -291,7 +291,7 @@ async function connectScenarioClients(
     const client = launchScenarioClient({
       client: clientCommand,
       scenario: definition,
-      host: "127.0.0.1",
+      host: server.host,
       port: server.gamePort,
       username: player.name,
       version: scenario.minecraft.version,
@@ -625,7 +625,7 @@ async function waitForSpectator(
   username?: string,
 ): Promise<void> {
   if (!server.rcon) throw new Error("rcon unavailable while waiting for spectator");
-  log(`waiting for spectator on 127.0.0.1:${server.gamePort}…`);
+  log(`waiting for spectator on ${server.host}:${server.gamePort}…`);
   let waitedForJoin = false;
   for (;;) {
     if (signal?.aborted) throw new Error("trial cancelled before spectator connected");

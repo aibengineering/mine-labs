@@ -15,6 +15,7 @@ export {
   type UiActiveTrial,
   type UiResult,
   type UiSnapshot,
+  type UiRemoteClient,
 } from "./server.js";
 export { buildClientMod, type ClientModBuild } from "./build.js";
 export { openLab } from "./open.js";

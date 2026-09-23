@@ -11,14 +11,17 @@
  * being notified rather than by polling anything.
  *
  * Two constraints shape it: it binds to 127.0.0.1 only, because it can stop
- * runs and must never be reachable off the machine; and statistics are restored
+ * runs and must never be reachable off the machine — the one exception is
+ * Tailscale remote mode, which binds to this machine's tailnet address and lets
+ * the tailnet decide who may reach it; and statistics are restored
  * from retained `results.json` files at startup, so restarting the harness does
  * not blank the history an operator was reading.
  */
 
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { Socket } from "node:net";
-import { readFile, readdir } from "node:fs/promises";
+import { createReadStream } from "node:fs";
+import { readFile, readdir, stat } from "node:fs/promises";
 import { join } from "node:path";
 import type { SessionObserver, SessionSummary, ScenarioSummary, TrialContext, SpectatorConnection } from "../session/run.js";
 import { SessionController } from "../session/controller.js";
@@ -94,6 +97,15 @@ export interface UiSnapshot {
   recent: UiResult[];
   currentScenario: string | null;
   scenarioTags: Record<string, string[]>;
+  /** Tailscale remote mode only: JVM properties the catalog's spectator mods read, for a client that cannot be launched with them. */
+  clientProperties?: Record<string, string>;
+}
+
+/** What a remote Minecraft client needs from the lab it cannot get from a managed launch. */
+export interface UiRemoteClient {
+  /** Mod JARs offered for download; `name` is the published file name. */
+  downloads: { name: string; path: string }[];
+  clientProperties: Record<string, string>;
 }
 
 interface ScenarioAccumulator {
@@ -106,6 +118,10 @@ export interface UiServerOptions {
   controller: SessionController;
   rootDir: string;
   port?: number;
+  /** Listen address; loopback unless serving Tailscale remote mode. */
+  host?: string;
+  /** Set in Tailscale remote mode: identify the watching player and serve its mods. */
+  remote?: UiRemoteClient;
   log?: (message: string) => void;
   refreshCatalog?: () => Promise<ScenarioSummary[]>;
 }
@@ -115,6 +131,10 @@ export class UiServer implements SessionObserver {
   readonly #maxJobs: number;
   readonly #rootDir: string;
   readonly #requestedPort: number;
+  readonly #host: string;
+  readonly #remote: UiRemoteClient | undefined;
+  #spectatorName: string | undefined;
+  #spectatorArrived = Promise.withResolvers<string>();
   readonly #log: (message: string) => void;
   readonly #server: Server;
   #phase: UiSnapshot["phase"] = "starting";
@@ -140,6 +160,8 @@ export class UiServer implements SessionObserver {
     this.#refreshCatalog = options.refreshCatalog;
     this.#rootDir = options.rootDir;
     this.#requestedPort = options.port ?? DEFAULT_UI_PORT;
+    this.#host = options.host ?? "127.0.0.1";
+    this.#remote = options.remote;
     this.#log = options.log ?? (() => undefined);
     this.#server = createServer((request, response) => void this.#handle(request, response));
     this.#server.on("connection", (socket) => {
@@ -150,6 +172,35 @@ export class UiServer implements SessionObserver {
 
   get port(): number {
     return this.#port;
+  }
+
+  get url(): string {
+    return `http://${this.#host}:${this.#port}`;
+  }
+
+  /** The player a remote client last identified itself as. */
+  get spectatorName(): string | undefined {
+    return this.#spectatorName;
+  }
+
+  /** Resolves once a remote client has identified its player. */
+  waitForSpectatorName(signal?: AbortSignal): Promise<string> {
+    if (!signal) return this.#spectatorArrived.promise;
+    signal.throwIfAborted();
+    const aborted = Promise.withResolvers<never>();
+    const abort = (): void => aborted.reject(signal.reason);
+    signal.addEventListener("abort", abort, { once: true });
+    return Promise.race([this.#spectatorArrived.promise, aborted.promise])
+      .finally(() => signal.removeEventListener("abort", abort));
+  }
+
+  #identify(request: IncomingMessage): void {
+    const name = request.headers["x-mine-labs-player"];
+    // Minecraft's own username rule; anything else cannot be a player to wait for.
+    if (typeof name !== "string" || !/^[A-Za-z0-9_]{1,16}$/u.test(name) || name === this.#spectatorName) return;
+    this.#spectatorName = name;
+    this.#log(`ui: remote spectator is ${name}`);
+    this.#spectatorArrived.resolve(name);
   }
 
   onPreparation(message: string): void {
@@ -200,14 +251,14 @@ export class UiServer implements SessionObserver {
     await new Promise<void>((resolve, reject) => {
       const onError = (error: Error) => reject(error);
       this.#server.once("error", onError);
-      this.#server.listen(this.#requestedPort, "127.0.0.1", () => {
+      this.#server.listen(this.#requestedPort, this.#host, () => {
         this.#server.off("error", onError);
         const address = this.#server.address();
         this.#port = typeof address === "object" && address ? address.port : this.#requestedPort;
         resolve();
       });
     });
-    this.#log(`ui: client mod API listening on http://127.0.0.1:${this.#port}`);
+    this.#log(`ui: client mod API listening on ${this.url}`);
   }
 
   async close(): Promise<void> {
@@ -313,12 +364,14 @@ export class UiServer implements SessionObserver {
       totals: countResults(this.#statisticsWindow),
       scenarioStats: orderedScenarioStats(this.#scenarioStats, this.#scenarios),
       recent: this.#recent.map((result) => ({ ...result, detail: resultDetailPreview(result.detail) })),
+      ...(this.#remote ? { clientProperties: { ...this.#remote.clientProperties } } : {}),
     };
   }
 
   async #handle(request: IncomingMessage, response: ServerResponse): Promise<void> {
     try {
       const url = new URL(request.url ?? "/", "http://127.0.0.1");
+      if (this.#remote) this.#identify(request);
       if (request.method === "GET" && url.pathname === "/api/scenario") {
         if (url.searchParams.get("current") === "true") {
           return this.#current ? json(response, 200, { ...this.#current.inspection, progress: this.#current.progress, outcome: this.#current.outcome ?? "in progress", source: "Current run: original configuration" })
@@ -330,6 +383,14 @@ export class UiServer implements SessionObserver {
       }
       if (request.method === "GET" && request.url === "/api/status") {
         return json(response, 200, this.snapshot());
+      }
+      if (this.#remote && request.method === "GET" && url.pathname.startsWith("/downloads/")) {
+        const name = decodeURIComponent(url.pathname.slice("/downloads/".length));
+        const download = this.#remote.downloads.find(entry => entry.name === name);
+        return download ? await sendFile(response, download.path, name) : json(response, 404, { error: "not found" });
+      }
+      if (this.#remote && request.method === "GET" && request.url === "/" && String(request.headers.accept ?? "").includes("text/html")) {
+        return html(response, remotePage(this.url, this.#remote));
       }
       if (request.method === "GET" && request.url === "/") {
         return json(response, 200, {
@@ -615,6 +676,46 @@ function activeMessage(active: Map<string, UiActiveTrial>): string {
   const trials = orderedActiveTrials(active);
   if (trials.length === 1) return `Running ${trials[0]!.scenario}`;
   return `Running ${trials.length} trials: ${trials.map(({ scenario }) => scenario).join(", ")}`;
+}
+
+async function sendFile(response: ServerResponse, path: string, name: string): Promise<void> {
+  const { size } = await stat(path);
+  response.writeHead(200, {
+    "Content-Type": "application/java-archive",
+    "Content-Length": size,
+    "Content-Disposition": `attachment; filename="${name}"`,
+    "Cache-Control": "no-store",
+  });
+  const { promise, resolve, reject } = Promise.withResolvers<void>();
+  createReadStream(path).once("error", reject).pipe(response).once("finish", resolve).once("error", reject);
+  await promise;
+}
+
+function escapeHtml(value: string): string {
+  return value.replace(/[&<>"']/gu, character => `&#${character.charCodeAt(0)};`);
+}
+
+/** The phone-facing setup page: everything a remote client needs, reachable from its browser. */
+function remotePage(url: string, remote: UiRemoteClient): string {
+  const links = remote.downloads.map(({ name }) =>
+    `<li><a href="/downloads/${encodeURIComponent(name)}" download>${escapeHtml(name)}</a></li>`).join("");
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mine Labs</title><style>body{font:16px/1.5 system-ui,sans-serif;max-width:40rem;margin:0 auto;padding:1rem;background:#fff;color:#1d1d1f}
+@media (prefers-color-scheme:dark){body{background:#161618;color:#ececec}a{color:#8ab4ff}}code{font-size:.95em;word-break:break-all}li{margin:.4rem 0}</style></head>
+<body><h1>Mine Labs</h1><p>Tailscale remote mode is serving this lab at <code>${escapeHtml(url)}</code>.</p>
+<ol><li>Create a NeoForge 1.21.4 instance in your launcher.</li>
+<li>Add these mods to it:<ul>${links}</ul></li>
+<li>Start Minecraft, choose <b>Mine Labs</b> on the title screen, and enter <code>${escapeHtml(url)}</code> as the lab address.</li></ol>
+<p>Download the mods again whenever the lab says they changed.</p></body></html>`;
+}
+
+function html(response: ServerResponse, body: string): void {
+  response.writeHead(200, {
+    "Content-Type": "text/html; charset=utf-8",
+    "Content-Length": Buffer.byteLength(body),
+    "Cache-Control": "no-store",
+  });
+  response.end(body);
 }
 
 function json(response: ServerResponse, status: number, value: unknown): void {

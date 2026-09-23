@@ -63,6 +63,7 @@ export async function main(argv: string[]): Promise<void> {
   program.command("run [scenarios...]")
     .description("run files or folders; add --spectator for the Mine Labs dashboard")
     .option("--spectator", "open the managed NeoForge client")
+    .option("--tailscale", "Tailscale remote mode: serve the dashboard on this machine's tailnet address for your own Minecraft client (such as a phone launcher) instead of opening one")
     .option("-j, --jobs <n>", "parallel scenario workers", positiveInteger, 1)
     .option("-r, --repeat <n>", "number of suite passes, or forever", repeatCount, 1)
     .option("--isolated", "always create fresh worlds instead of using safe resets")
@@ -82,12 +83,12 @@ export async function main(argv: string[]): Promise<void> {
       process.on("SIGINT", stop);
       process.on("SIGTERM", stop);
       try {
-        if (opts.spectator || files.length === 0) {
+        if (opts.spectator || opts.tailscale || files.length === 0) {
           const clientRoot = command.getOptionValueSource("out") === "default" ? resolve(".mine-labs/open") : resolve(opts.out);
           await openLab({ paths: files.length ? files : ["scenarios"], rootDir: clientRoot,
             preferPort: opts.port, uiPort: opts.uiPort, jobs: opts.jobs, isolated: opts.isolated,
             repeat: command.getOptionValueSource("repeat") === "cli" ? opts.repeat : undefined,
-            keepRuns: opts.keepRuns,
+            keepRuns: opts.keepRuns, tailscale: opts.tailscale,
             signal: controller.signal, log });
         } else {
           const catalog = await loadRunCatalog(files);

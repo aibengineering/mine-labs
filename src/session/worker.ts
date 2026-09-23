@@ -56,7 +56,7 @@ export function createSessionWorker(options: SessionOptions, workerIndex: number
               prepare(`Preparing ${scenario.name}: ${scenario.world.type} world`);
               const server = await MinecraftServer.create({
                 version: scenario.minecraft.version, root, log: message => currentLog(message),
-                preferPort: options.preferPort, worldType: scenario.world.type,
+                host: options.host, preferPort: options.preferPort, worldType: scenario.world.type,
                 seed: scenario.world.seed, structures: scenario.world.structures,
                 spectatorNames: username ? [username] : [],
               });
@@ -74,7 +74,7 @@ export function createSessionWorker(options: SessionOptions, workerIndex: number
               onPrepared: async () => {
                 signal?.throwIfAborted();
                 if (username) options.observer?.onConnectionChanged?.({
-                  id: current.id, host: "127.0.0.1", port: current.server.gamePort,
+                  id: current.id, host: current.server.host, port: current.server.gamePort,
                   focusPlayer: scenario.players[0]?.name,
                 });
               },
