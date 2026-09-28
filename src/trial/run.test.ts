@@ -9,6 +9,9 @@ import { scenarioSchema } from "../scenario/schema.js";
 
 type TrialServer = Parameters<typeof runScenarioTrial>[0]["server"];
 
+/** Nothing settles on a fake server, so the real game's settle waits are skipped. */
+const noSettle = { arrangementMs: 0, teleportMs: 0 };
+
 /**
  * A stand-in server whose rcon records every command, in order, into
  * `commands`. `rcon` replaces or adds individual methods.
@@ -91,7 +94,7 @@ test("a failed snapshot never arranges or tears down an unsaved arena", async ()
       if (command.startsWith("clone ")) throw new Error("snapshot refused");
     },
   } });
-  const result = await runScenarioTrial({ runDir: "unused-snapshot-failure", scenario: fixture, server, reuseServer: true, log: () => {} });
+  const result = await runScenarioTrial({ runDir: "unused-snapshot-failure", scenario: fixture, server, reuseServer: true, log: () => {}, settle: noSettle });
   assert.equal(result.outcome, "error");
   assert.equal(result.error, "snapshot refused");
   assert.ok(commands.some((command) => command.startsWith("clone ")));
@@ -112,7 +115,7 @@ test("a prepared world is frozen before setup and cancellation never launches it
   });
   const server = recordingServer(commands, { worldDir: join(root, "world") });
   try {
-    const trial = runScenarioTrial({ runDir: root, scenario: fixture, server, log: () => {}, signal: cancellation.signal,
+    const trial = runScenarioTrial({ runDir: root, scenario: fixture, server, log: () => {}, signal: cancellation.signal, settle: noSettle,
       holdPreparedWorld: true, onWorldPrepared: () => { prepared.resolve(); return gate.promise; },
     });
     await prepared.promise;
@@ -142,7 +145,7 @@ test("world and client gates precede observer arrival, activation, and thaw", as
     preparePlayerMetrics: async () => {},
   } });
   try {
-    const result = await runScenarioTrial({ runDir: root, scenario: fixture, server, log: () => {},
+    const result = await runScenarioTrial({ runDir: root, scenario: fixture, server, log: () => {}, settle: noSettle,
       holdPreparedWorld: true, waitForSpectator: true, spectatorUsername: "Observer",
       onWorldPrepared: async () => { commands.push("world prepared"); },
       onPrepared: async () => { commands.push("clients prepared"); },

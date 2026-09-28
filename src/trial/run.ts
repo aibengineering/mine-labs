@@ -103,9 +103,46 @@ export interface ScenarioTrialOptions {
   reuseServer?: boolean;
   startedAt?: number;
   signal?: AbortSignal;
+  /**
+   * Override the fixed settle waits below. Production callers leave this
+   * unset; it exists so unit tests against fake servers and clients, where
+   * nothing is settling, need not sleep through them.
+   */
+  settle?: { arrangementMs?: number; teleportMs?: number };
 }
 
 const GOAL_POLL_MS = 250;
+
+/**
+ * Grace between the last setup command and the first client joining.
+ *
+ * Every setup command has been applied by the time rcon answers it, but not
+ * everything it sets off has: sand and gravel start falling, placed fluids
+ * spread, neighbouring blocks update, and a `fill ... destroy` drops item
+ * entities, all on later ticks. A client that joined straight away would load
+ * chunks mid-reaction and could see an arena still changing under it. Nothing
+ * the server exposes over rcon says "the fixture has stopped reacting", so
+ * this is a fixed wait of about 30 ticks rather than a condition. (A frozen
+ * standby defers tick-driven reactions to its thaw; the wait is kept there
+ * too, unchanged.) The value predates any record of how it was chosen, and
+ * shortening it would surface as scenarios that are occasionally flaky against
+ * the real game, not as a failing test.
+ */
+const ARRANGEMENT_SETTLE_MS = 1500;
+
+/**
+ * Grace between teleporting a positioned player and telling clients the
+ * fixture is `arranged`.
+ *
+ * The rcon `tp` has moved the player on the server when it returns, but the
+ * client learns of it only when the resulting position packet arrives and it
+ * confirms the teleport. The protocol asks each client to observe its own
+ * arrangement before `prepared`, yet a client that simply awaits `arranged`
+ * and replies (as `examples/clients/walker.js` does) would otherwise be
+ * released still believing it stands at its join point. The harness cannot
+ * observe that packet being received, so this stays a fixed wait.
+ */
+const TELEPORT_SETTLE_MS = 300;
 
 /** Run one isolated scenario with a fresh server and world. */
 export async function runScenario(opts: RunOptions): Promise<RunResult> {
@@ -178,7 +215,10 @@ export async function runScenarioTrial(opts: ScenarioTrialOptions): Promise<RunR
 
   try {
     if (opts.reuseServer) arenaBackup = await snapshotArena(server, scenario, log);
-    const releaseArena = await arrangeScenario(server, scenario, log, Boolean(opts.reuseServer), Boolean(opts.holdPreparedWorld));
+    const releaseArena = await arrangeScenario(
+      server, scenario, log, Boolean(opts.reuseServer), Boolean(opts.holdPreparedWorld),
+      opts.settle?.arrangementMs ?? ARRANGEMENT_SETTLE_MS,
+    );
     try {
       await waitForClientPhase(Promise.resolve(opts.onWorldPrepared?.()), opts.signal, "trial cancelled while world was prepared");
       await connectScenarioClients({ ...opts, clients });
@@ -313,7 +353,7 @@ async function connectScenarioClients(
       resetReusablePlayer: Boolean(opts.reuseServer),
     });
     await server.rcon.preparePlayerMetrics(player.name);
-    if (player.pos) await delay(300);
+    if (player.pos) await delay(opts.settle?.teleportMs ?? TELEPORT_SETTLE_MS);
     log(`client '${player.name}' arranged`);
   }
 
@@ -506,6 +546,7 @@ async function arrangeScenario(
   log: (message: string) => void,
   reuseServer: boolean,
   holdPreparedWorld = false,
+  settleMs = ARRANGEMENT_SETTLE_MS,
 ): Promise<() => Promise<void>> {
   const rcon = server.rcon;
   if (!rcon) throw new Error("rcon unavailable before arrangement");
@@ -530,7 +571,7 @@ async function arrangeScenario(
     await release();
     throw error;
   }
-  await delay(1500);
+  await delay(settleMs);
   return release;
 }
 
