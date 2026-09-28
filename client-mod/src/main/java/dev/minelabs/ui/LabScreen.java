@@ -272,9 +272,10 @@ final class LabScreen extends Screen {
         super.render(graphics, mouseX, mouseY, partialTick);
         String heading = "Mine Labs";
         graphics.drawString(font, heading, MARGIN, 8, TITLE, false);
-        String message = api.notice().isBlank() ? snapshot.message() : api.notice();
+        String message = !api.notice().isBlank() ? api.notice() : snapshot.supported() ? snapshot.message() : snapshot.versionNotice();
         int messageLeft = MARGIN + font.width(heading) + 12;
-        graphics.drawString(font, fitWidth(message, width - messageLeft - MARGIN), messageLeft, 8, snapshot.available() && !api.controlFailed() ? TEXT : BAD, false);
+        boolean healthy = snapshot.available() && snapshot.supported() && !api.controlFailed();
+        graphics.drawString(font, fitWidth(message, width - messageLeft - MARGIN), messageLeft, 8, healthy ? TEXT : BAD, false);
         renderSummary(graphics, snapshot.totals());
         if (view == View.OVERVIEW) renderOverview(graphics, snapshot);
         else renderRecent(graphics, snapshot);
@@ -298,7 +299,7 @@ final class LabScreen extends Screen {
         graphics.drawString(font, fitWidth("Last " + totals.runs() + " runs  •  " + rate + " pass", sidebarWidth()), MARGIN, y, TEXT, false);
         graphics.drawString(font, fitWidth(totals.passed() + " pass  •  " + totals.failed() + " fail  •  " + totals.cancelled() + " cancelled", sidebarWidth()), MARGIN, y + 11, MUTED, false);
         drawResultBar(graphics, MARGIN, y + 23, sidebarWidth(), 5, totals.passed(), totals.failed(), totals.cancelled());
-        String hint = "Esc or F10 closes";
+        String hint = "Esc or " + ClientEvents.dashboardKeyLabel() + " closes";
         if (y + 44 <= height - MARGIN) graphics.drawString(font, hint, MARGIN, y + 36, MUTED, false);
     }
 

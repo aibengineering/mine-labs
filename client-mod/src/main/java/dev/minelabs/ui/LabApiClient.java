@@ -24,6 +24,8 @@ final class LabApiClient {
     private static final long POLL_INTERVAL_MS = 500;
     private static final long FAILURE_GRACE_MS = 2_000;
     private static final int MAX_RESPONSE_CHARS = 1_000_000;
+    /** The /api/status shape this mod reads; the lab reports its own as apiVersion. */
+    static final int API_VERSION = 1;
     /** Minecraft's username rule, for names sent to and received from the lab. */
     private static final String PLAYER_NAME = "[A-Za-z0-9_]{1,16}";
     /** Properties the JVM was launched with, captured before any lab-supplied value is applied. */
@@ -224,13 +226,13 @@ final class LabApiClient {
         JsonArray activeTrials = array(root, "activeTrials");
         return new Snapshot(
                 true,
+                integer(root, "apiVersion", 0),
                 string(root, "phase", "waiting"),
                 string(root, "message", "Mine Labs is ready"),
                 bool(root, "continuousEnabled", true),
                 bool(root, "autoStartEnabled", true),
                 string(root, "awaitingStartTrialId", ""),
                 bool(root, "singleScenarioEnabled", false),
-                string(root, "selectedCategory", null),
                 scenarios,
                 parseScenarioTags(object(root, "scenarioTags")),
                 parseCategories(array(root, "categories")),
@@ -413,12 +415,12 @@ final class LabApiClient {
 
     record Snapshot(
             boolean available,
+            int apiVersion,
             String phase,
             String message,
             boolean continuousEnabled,
             boolean autoStartEnabled, String awaitingStartTrialId,
             boolean singleScenarioEnabled,
-            String selectedCategory,
             List<String> scenarios, Map<String, List<String>> scenarioTags,
             List<Category> categories,
             Active active,
@@ -428,8 +430,15 @@ final class LabApiClient {
             Connection connection, String currentScenario, int jobs, int maxJobs, int activeCount) {
         List<String> tagsFor(String scenario) { return scenarioTags.getOrDefault(scenario, List.of()); }
 
+        /** Whether the lab's fields mean what this mod reads them as; an offline snapshot has none to misread. */
+        boolean supported() { return !available || apiVersion == API_VERSION; }
+
+        String versionNotice() {
+            return "Mine Labs speaks UI API v" + apiVersion + " but this mod reads v" + API_VERSION + "; update the mod or the lab";
+        }
+
         static Snapshot offline(String message) {
-            return new Snapshot(false, "offline", message, false, true, "", false, null, List.of(), Map.of(), List.of(), null, new Totals(0, 0, 0, 0), List.of(), List.of(), null, "", 1, 1, 0);
+            return new Snapshot(false, API_VERSION, "offline", message, false, true, "", false, List.of(), Map.of(), List.of(), null, new Totals(0, 0, 0, 0), List.of(), List.of(), null, "", 1, 1, 0);
         }
     }
 

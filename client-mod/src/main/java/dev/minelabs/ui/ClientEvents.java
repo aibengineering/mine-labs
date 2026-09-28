@@ -39,6 +39,8 @@ final class ClientEvents {
             GLFW.GLFW_KEY_F10,
             "key.categories.mine_labs_ui");
 
+    static String dashboardKeyLabel() { return OPEN_DASHBOARD.getTranslatedKeyMessage().getString(); }
+
     private static final KeyMapping OPEN_DETAILS = new KeyMapping(
             "key.mine_labs_ui.details", InputConstants.Type.KEYSYM, GLFW.GLFW_KEY_F9,
             "key.categories.mine_labs_ui");

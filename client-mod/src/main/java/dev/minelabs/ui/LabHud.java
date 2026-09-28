@@ -60,7 +60,7 @@ final class LabHud {
                     "Latest   " + last.scenario() + "  /  " + last.outcome().toUpperCase(Locale.ROOT),
                     outcomeColor(last.outcome())));
         }
-        lines.add(new Line("Dashboard  F10  or  Pause > Mine Labs", MUTED));
+        lines.add(new Line("Dashboard  " + ClientEvents.dashboardKeyLabel() + "  or  Pause > Mine Labs", MUTED));
         return lines;
     }
 
