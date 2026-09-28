@@ -3,11 +3,15 @@ package dev.minelabs.ui;
 import com.mojang.blaze3d.platform.InputConstants;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
+import java.util.List;
+import net.minecraft.client.gui.components.AbstractWidget;
 import net.minecraft.client.gui.components.Button;
+import net.minecraft.client.gui.components.events.GuiEventListener;
 import net.minecraft.client.gui.screens.ConnectScreen;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.gui.screens.TitleScreen;
 import net.minecraft.client.gui.screens.PauseScreen;
+import net.minecraft.client.gui.screens.multiplayer.JoinMultiplayerScreen;
 import net.minecraft.client.multiplayer.ServerData;
 import net.minecraft.client.multiplayer.resolver.ServerAddress;
 import net.minecraft.network.chat.Component;
@@ -85,24 +89,68 @@ final class ClientEvents {
         }
     }
 
+    /**
+     * Open the dashboard from a menu button, which is how a touch client gets
+     * there: F10 needs a keyboard. A player's own client has nowhere to connect
+     * until it is given a lab address, so that screen comes first.
+     */
+    private static Button dashboardButton(Screen parent, int x, int y, int width) {
+        return Button.builder(Component.literal("Mine Labs"), button ->
+                Minecraft.getInstance().setScreen(managed() ? DASHBOARD : new LabAddressScreen(API, parent)))
+                .bounds(x, y, width, 20).build();
+    }
+
+    /**
+     * The bottom edge of the screen's own menu buttons. Added buttons go under
+     * them rather than in a corner, where mobile launchers such as Amethyst draw
+     * their on-screen controls. Text along the bottom edge, such as the title
+     * screen's copyright line, is not part of the menu.
+     */
+    private static int menuBottom(Screen screen, List<GuiEventListener> listeners) {
+        int bottom = screen.height / 4;
+        for (GuiEventListener listener : listeners) {
+            if (listener instanceof AbstractWidget widget && widget.visible && widget.getY() + widget.getHeight() <= screen.height - 20) {
+                bottom = Math.max(bottom, widget.getY() + widget.getHeight());
+            }
+        }
+        return bottom;
+    }
+
     @SubscribeEvent
     public static void onScreenInit(ScreenEvent.Init.Post event) {
-        if (event.getScreen() instanceof TitleScreen screen) {
-            event.addListener(Button.builder(Component.literal("Mine Labs"), button ->
-                    // A player's own client has nowhere to connect until it is given a lab address.
-                    Minecraft.getInstance().setScreen(managed() ? DASHBOARD : new LabAddressScreen(API, screen)))
-                    .bounds(10, 10, 100, 20).build());
+        Screen screen = event.getScreen();
+        if (screen instanceof TitleScreen) {
+            int y = Math.min(menuBottom(screen, event.getListenersList()) + 8, screen.height - 34);
+            event.addListener(dashboardButton(screen, screen.width / 2 - 100, y, 200));
         }
-        if (event.getScreen() instanceof PauseScreen) {
-            event.addListener(Button.builder(Component.literal("Mine Labs (F10)"), button ->
-                    Minecraft.getInstance().setScreen(DASHBOARD))
-                    .bounds(10, 10, 125, 20).build());
-            if (managed()) event.addListener(Button.builder(Component.literal("Return to Labs"), button -> returnToLabs())
-                    .bounds(10, 34, 125, 20).build());
+        if (screen instanceof JoinMultiplayerScreen) {
+            // Beside the footer's upper row, where players look to connect.
+            int rowY = Integer.MAX_VALUE;
+            int left = screen.width / 2 - 154;
+            for (GuiEventListener listener : event.getListenersList()) {
+                if (listener instanceof AbstractWidget widget && widget.visible && widget.getY() >= screen.height - 64) {
+                    if (widget.getY() < rowY) { rowY = widget.getY(); left = widget.getX(); }
+                    else if (widget.getY() == rowY) left = Math.min(left, widget.getX());
+                }
+            }
+            if (rowY == Integer.MAX_VALUE) rowY = screen.height - 52;
+            event.addListener(dashboardButton(screen, Math.max(4, left - 84), rowY, 80));
+        }
+        if (screen instanceof PauseScreen) {
+            int y = menuBottom(screen, event.getListenersList()) + 8;
+            if (!managed()) {
+                event.addListener(dashboardButton(screen, screen.width / 2 - 49, y, 98));
+                return;
+            }
+            // One row under the pause menu, reached with Amethyst's on-screen Pause button.
+            int left = screen.width / 2 - 151;
+            event.addListener(dashboardButton(screen, left, y, 98));
+            event.addListener(Button.builder(Component.literal("Return to Labs"), button -> returnToLabs())
+                    .bounds(left + 102, y, 98, 20).build());
             Button teleport = Button.builder(Component.literal("Teleport to bot"), button -> teleportToBot())
-                    .bounds(10, 58, 125, 20).build();
+                    .bounds(left + 204, y, 98, 20).build();
             teleport.active = canTeleportToBot();
-            if (managed()) event.addListener(teleport);
+            event.addListener(teleport);
         }
     }
 

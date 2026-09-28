@@ -28,6 +28,7 @@ import { SessionController } from "../session/controller.js";
 import type { RunResult } from "../trial/run.js";
 import type { ScenarioInspection } from "../scenario/inspection.js";
 import type { GoalResult } from "../trial/goals.js";
+import { describeDownloads, setupPage } from "./setup-page.js";
 
 export const DEFAULT_UI_PORT = 25_578;
 const MAX_CONTROL_BODY_BYTES = 16_384;
@@ -176,6 +177,11 @@ export class UiServer implements SessionObserver {
 
   get url(): string {
     return `http://${this.#host}:${this.#port}`;
+  }
+
+  /** The page a device opens to set itself up in Tailscale remote mode. */
+  get setupUrl(): string {
+    return `${this.url}/setup`;
   }
 
   /** The player a remote client last identified itself as. */
@@ -389,14 +395,17 @@ export class UiServer implements SessionObserver {
         const download = this.#remote.downloads.find(entry => entry.name === name);
         return download ? await sendFile(response, download.path, name) : json(response, 404, { error: "not found" });
       }
-      if (this.#remote && request.method === "GET" && request.url === "/" && String(request.headers.accept ?? "").includes("text/html")) {
-        return html(response, remotePage(this.url, this.#remote));
+      // `/setup` always answers with the page, for in-app browsers and link previews that do not ask for HTML.
+      if (this.#remote && request.method === "GET" && (url.pathname === "/setup"
+        || (request.url === "/" && String(request.headers.accept ?? "").includes("text/html")))) {
+        return html(response, setupPage(this.url, await describeDownloads(this.#remote.downloads)));
       }
       if (request.method === "GET" && request.url === "/") {
         return json(response, 200, {
           service: "mine-labs-ui",
           status: "/api/status",
           control: "/api/control",
+          ...(this.#remote ? { setup: "/setup" } : {}),
         });
       }
       if (request.method === "POST" && request.url === "/api/control") {
@@ -689,24 +698,6 @@ async function sendFile(response: ServerResponse, path: string, name: string): P
   const { promise, resolve, reject } = Promise.withResolvers<void>();
   createReadStream(path).once("error", reject).pipe(response).once("finish", resolve).once("error", reject);
   await promise;
-}
-
-function escapeHtml(value: string): string {
-  return value.replace(/[&<>"']/gu, character => `&#${character.charCodeAt(0)};`);
-}
-
-/** The phone-facing setup page: everything a remote client needs, reachable from its browser. */
-function remotePage(url: string, remote: UiRemoteClient): string {
-  const links = remote.downloads.map(({ name }) =>
-    `<li><a href="/downloads/${encodeURIComponent(name)}" download>${escapeHtml(name)}</a></li>`).join("");
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Mine Labs</title><style>body{font:16px/1.5 system-ui,sans-serif;max-width:40rem;margin:0 auto;padding:1rem;background:#fff;color:#1d1d1f}
-@media (prefers-color-scheme:dark){body{background:#161618;color:#ececec}a{color:#8ab4ff}}code{font-size:.95em;word-break:break-all}li{margin:.4rem 0}</style></head>
-<body><h1>Mine Labs</h1><p>Tailscale remote mode is serving this lab at <code>${escapeHtml(url)}</code>.</p>
-<ol><li>Create a NeoForge 1.21.4 instance in your launcher.</li>
-<li>Add these mods to it:<ul>${links}</ul></li>
-<li>Start Minecraft, choose <b>Mine Labs</b> on the title screen, and enter <code>${escapeHtml(url)}</code> as the lab address.</li></ol>
-<p>Download the mods again whenever the lab says they changed.</p></body></html>`;
 }
 
 function html(response: ServerResponse, body: string): void {

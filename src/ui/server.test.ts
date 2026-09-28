@@ -467,6 +467,12 @@ test("Tailscale remote mode identifies the watching player and serves its mods a
     const page = await fetch(`${base}/`, { headers: { accept: "text/html" } });
     assert.match(page.headers.get("content-type") ?? "", /text\/html/u);
     assert.match(await page.text(), /\/downloads\/mine-labs-spectator-viewer\.jar/u);
+    // `/setup` answers with the page even without asking for HTML, and shows the address to copy.
+    const setup = await (await fetch(`${base}/setup`)).text();
+    assert.match(setup, new RegExp(`value="${base.replaceAll(".", "\\.")}"`, "u"));
+    assert.match(setup, /id="copy-address"/u);
+    assert.match(setup, /9 B/u);
+    assert.equal(server.setupUrl, `${base}/setup`);
     const download = await fetch(`${base}/downloads/mine-labs-spectator-viewer.jar`);
     assert.equal(download.status, 200);
     assert.equal(await download.text(), "jar bytes");
@@ -484,5 +490,6 @@ test("a loopback lab neither identifies players nor serves downloads", async () 
     assert.equal(server.spectatorName, undefined);
     assert.equal(status.clientProperties, undefined);
     assert.equal((await fetch(`${base}/downloads/mine-labs-ui.jar`)).status, 404);
+    assert.equal((await fetch(`${base}/setup`)).status, 404);
   } finally { controller.stop(); await server.close(); await rm(root, { recursive: true, force: true }); }
 });

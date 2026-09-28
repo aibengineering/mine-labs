@@ -40,12 +40,12 @@ final class LabHud {
                     TEXT));
             if (snapshot.phase().equals("ready")) {
                 lines.add(new Line("World paused; fly around to inspect", MUTED));
-                lines.add(new Line("Start scenario  " + ClientEvents.startKeyLabel(), GOOD));
+                lines.add(new Line("Start scenario  " + ClientEvents.startKeyLabel() + "  or  Pause > Mine Labs", GOOD));
             } else if (snapshot.phase().equals("running")) {
                 lines.add(new Line("Cycle    " + active.cycle() + "  /  elapsed " + age(active.startedAt()), MUTED));
             }
             if (!active.goalText().isBlank()) {
-                lines.add(new Line("Details  " + ClientEvents.detailsKeyLabel(), GOOD));
+                lines.add(new Line("Details  " + ClientEvents.detailsKeyLabel() + "  or  Pause > Mine Labs", GOOD));
             }
         } else {
             lines.add(new Line(snapshot.message(), snapshot.available() ? MUTED : WARN));
@@ -60,7 +60,7 @@ final class LabHud {
                     "Latest   " + last.scenario() + "  /  " + last.outcome().toUpperCase(Locale.ROOT),
                     outcomeColor(last.outcome())));
         }
-        lines.add(new Line("F10 dashboard  /  loop mode, skip, select, stop", MUTED));
+        lines.add(new Line("Dashboard  F10  or  Pause > Mine Labs", MUTED));
         return lines;
     }
 

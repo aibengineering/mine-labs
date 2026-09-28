@@ -66,8 +66,16 @@ export async function openLab(options: {
     options.signal?.throwIfAborted();
     let spectator: { readonly username: string } = { username: SPECTATOR_USERNAME };
     if (remote) {
-      options.log(`Tailscale remote mode: open ${ui.url} on your device for the mods, then enter that address in Minecraft's Mine Labs screen`);
-      const name = await ui.waitForSpectatorName(options.signal);
+      options.log(`Tailscale remote mode: set up your device at ${ui.setupUrl}`);
+      options.log(`lab address to enter in Minecraft: ${ui.url}`);
+      // Exit Labs from the dashboard stops the controller, so it must end this wait as well as Ctrl+C.
+      const waiting = options.signal ? AbortSignal.any([options.signal, controller.signal]) : controller.signal;
+      const name = await ui.waitForSpectatorName(waiting).catch((error: unknown) => {
+        if (waiting.aborted) return undefined;
+        throw error;
+      });
+      // Stopped before any device connected: there is no session to run.
+      if (!name) return;
       options.log(`Mine Labs client connected as ${name}`);
       // Each new world reads the latest name, so switching devices takes effect on the next world.
       spectator = { get username() { return ui.spectatorName ?? name; } };

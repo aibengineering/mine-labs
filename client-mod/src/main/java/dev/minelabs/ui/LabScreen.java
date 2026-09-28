@@ -22,14 +22,18 @@ final class LabScreen extends Screen {
     private static final int GOOD = 0xFF79D99A;
     private static final int BAD = 0xFFFF7070;
     private static final int BAR_BACKGROUND = 0xFF273143;
-    private static final int ACTIONS_Y = 52;
-    private static final int TABS_Y = 108;
-    private static final int CATEGORY_Y = 135;
-    private static final int SUMMARY_Y = 164;
-    private static final int SUMMARY_BAR_Y = 178;
-    private static final int TABLE_HEADER_Y = 192;
-    private static final int TABLE_ROWS_Y = 210;
-    private static final int ROW_HEIGHT = 22;
+    private static final int SIDEBAR_BACKGROUND = 0x40FFFFFF;
+    /**
+     * Two columns: controls stacked in a narrow sidebar on the left, and the
+     * scenario list using the full height on the right. On a phone, where the
+     * scaled screen is short, a single centred column left room for only a few
+     * scenarios below its rows of controls.
+     */
+    private static final int MARGIN = 8;
+    private static final int GAP = 4;
+    private static final int HEADER_HEIGHT = 22;
+    private static final int CONTROL_PITCH = 22;
+    private static final int ROW_HEIGHT = 20;
 
     private final LabApiClient api;
     private View view = View.OVERVIEW;
@@ -57,6 +61,8 @@ final class LabScreen extends Screen {
     private Button teleportButton;
     private Button detailsButton;
     private Button jobsButton;
+    private int sidebarBottom;
+    private static final int PAGE_LABEL_WIDTH = 44;
 
     LabScreen(LabApiClient api) {
         super(Component.literal("Mine Labs test dashboard"));
@@ -66,58 +72,89 @@ final class LabScreen extends Screen {
     @Override
     protected void init() {
         folderOpen = false;
-        int center = width / 2;
         LabApiClient.Snapshot snapshot = api.snapshot();
         displayedScenarios = snapshot.scenarios();
         displayedTags = snapshot.scenarioTags();
         if (tag != null && !availableTags(snapshot).contains(tag)) tag = null;
         displayedConnection = snapshot.connection() != null;
-        int actionGap = 6;
-        int actionWidth = Math.min(98, Math.max(52, (width - 24 - actionGap * 4) / 5));
-        int actionLeft = center - (actionWidth * 5 + actionGap * 4) / 2;
+        normalizeCategory(snapshot);
+
+        // Sidebar: full-width buttons for the main actions, pairs for the rest.
+        int x = MARGIN;
+        int full = sidebarWidth();
+        int half = (full - GAP) / 2;
+        int right = x + half + GAP;
+        int y = HEADER_HEIGHT + GAP;
+        startButton = addRenderableWidget(Button.builder(Component.literal("Start scenario (" + ClientEvents.startKeyLabel() + ")"), button -> ClientEvents.startScenario())
+                .bounds(x, y, full, 20).build());
+        y += CONTROL_PITCH;
+        detailsButton = addRenderableWidget(Button.builder(Component.literal("Details"), button ->
+                minecraft.setScreen(new LabDetailsScreen(api, api.snapshot().currentScenario(), true)))
+                .bounds(x, y, half, 20).build());
+        detailsButton.setTooltip(Tooltip.create(Component.literal("Full goals and live checks for the current scenario (" + ClientEvents.detailsKeyLabel() + ").")));
+        refreshButton = addRenderableWidget(Button.builder(Component.literal("Refresh"), button -> api.control("refresh", null))
+                .bounds(right, y, half, 20).build());
+        refreshButton.setTooltip(Tooltip.create(Component.literal("Reload scenario YAMLs from disk. The active run keeps its original setup.")));
+        y += CONTROL_PITCH;
+        addRenderableWidget(Button.builder(tabLabel("Scenarios", View.OVERVIEW), button -> switchView(View.OVERVIEW))
+                .bounds(x, y, half, 20).build());
+        addRenderableWidget(Button.builder(tabLabel("Recent", View.RECENT), button -> switchView(View.RECENT))
+                .bounds(right, y, half, 20).build());
+        y += CONTROL_PITCH;
+        autoStartButton = addRenderableWidget(Button.builder(Component.literal("Auto-start: ON"), button ->
+                api.setAutoStart(!api.snapshot().autoStartEnabled()))
+                .bounds(x, y, half, 20).build());
+        autoStartButton.setTooltip(Tooltip.create(Component.literal("ON starts when the world is ready. OFF lets you inspect the frozen world first. Applies to the watched worker; background workers continue automatically.")));
         continuousButton = addRenderableWidget(Button.builder(continuousLabel(snapshot), button ->
                         api.setContinuous(!api.snapshot().continuousEnabled()))
-                .bounds(actionLeft, ACTIONS_Y, actionWidth, 20)
-                .build());
+                .bounds(right, y, half, 20).build());
+        continuousButton.setTooltip(Tooltip.create(Component.literal("Keep running: start the next scenario when one finishes.")));
+        y += CONTROL_PITCH;
         singleScenarioButton = addRenderableWidget(Button.builder(singleScenarioLabel(snapshot), button ->
                         api.setSingleScenario(!api.snapshot().singleScenarioEnabled()))
-                .bounds(actionLeft + actionWidth + actionGap, ACTIONS_Y, actionWidth, 20)
-                .build());
-        addRenderableWidget(Button.builder(Component.literal(ClientEvents.managed() ? "Return to Labs" : "Skip active"), button -> {
-                    if (ClientEvents.managed()) ClientEvents.returnToLabs();
-                    else api.control("skip", null);
-                })
-                .bounds(actionLeft + (actionWidth + actionGap) * 2, ACTIONS_Y, actionWidth, 20)
-                .build());
-        addRenderableWidget(Button.builder(Component.literal(ClientEvents.managed() ? "Exit Labs" : "Stop run"), button -> api.control("stop", null))
-                .bounds(actionLeft + (actionWidth + actionGap) * 3, ACTIONS_Y, actionWidth, 20)
-                .build());
+                .bounds(x, y, half, 20).build());
+        singleScenarioButton.setTooltip(Tooltip.create(Component.literal("ONE loops the selected scenario. FOLDER cycles through the folder.")));
         jobsButton = addRenderableWidget(Button.builder(Component.literal("Parallel: " + snapshot.jobs()), button -> {
                     LabApiClient.Snapshot current = api.snapshot();
                     api.setJobs(current.jobs() >= current.maxJobs() ? 1 : current.jobs() + 1);
                 })
-                .bounds(actionLeft + (actionWidth + actionGap) * 4, ACTIONS_Y, actionWidth, 20)
-                .build());
-        addRenderableWidget(Button.builder(tabLabel("Overview", View.OVERVIEW), button -> switchView(View.OVERVIEW))
-                .bounds(contentLeft(), TABS_Y, 100, 20)
-                .build());
-        autoStartButton = addRenderableWidget(Button.builder(Component.literal("Auto-start: ON"), button ->
-                api.setAutoStart(!api.snapshot().autoStartEnabled()))
-                .bounds(center - 153, 80, 130, 20).build());
-        autoStartButton.setTooltip(Tooltip.create(Component.literal("ON starts when the world is ready. OFF lets you inspect the frozen world first. Applies to the watched worker; background workers continue automatically.")));
-        startButton = addRenderableWidget(Button.builder(Component.literal("Start scenario (" + ClientEvents.startKeyLabel() + ")"), button -> ClientEvents.startScenario())
-                .bounds(center - 17, 80, 170, 20).build());
-        addRenderableWidget(Button.builder(tabLabel("Recent runs", View.RECENT), button -> switchView(View.RECENT))
-                .bounds(contentLeft() + 106, TABS_Y, 110, 20)
-                .build());
+                .bounds(right, y, half, 20).build());
+        y += CONTROL_PITCH;
+        runCategoryButton = addRenderableWidget(Button.builder(Component.literal(runCategoryLabel(snapshot)), button ->
+                        { api.selectCategory(category); minecraft.setScreen(new LabLoadingScreen(api, category == null ? "All scenarios" : category)); })
+                .bounds(x, y, full, 20).build());
+        y += CONTROL_PITCH;
+        if (ClientEvents.managed() && snapshot.connection() != null) {
+            teleportButton = addRenderableWidget(Button.builder(Component.literal("Teleport to bot"), button -> ClientEvents.teleportToBot())
+                    .bounds(x, y, half, 20).build());
+            teleportButton.setTooltip(Tooltip.create(Component.literal("Jump to the first scenario bot's current position and dimension.")));
+            addRenderableWidget(Button.builder(Component.literal("Join world"), button -> ClientEvents.reconnect())
+                    .bounds(right, y, half, 20).build());
+            y += CONTROL_PITCH;
+        } else if (!LabConfig.launchedWithUrl()) {
+            addRenderableWidget(Button.builder(Component.literal("Lab address"), button ->
+                    minecraft.setScreen(new LabAddressScreen(api, this)))
+                    .bounds(x, y, full, 20).build())
+                    .setTooltip(Tooltip.create(Component.literal("Connect to another lab, such as one in Tailscale remote mode.")));
+            y += CONTROL_PITCH;
+        }
+        addRenderableWidget(Button.builder(Component.literal(ClientEvents.managed() ? "Return to Labs" : "Skip active"), button -> {
+                    if (ClientEvents.managed()) ClientEvents.returnToLabs();
+                    else api.control("skip", null);
+                })
+                .bounds(x, y, half, 20).build());
+        addRenderableWidget(Button.builder(Component.literal(ClientEvents.managed() ? "Exit Labs" : "Stop run"), button -> api.control("stop", null))
+                .bounds(right, y, half, 20).build());
+        sidebarBottom = y + 20;
 
-        normalizeCategory(snapshot);
-        detailsButton = addRenderableWidget(Button.builder(Component.literal("Scenario details"), button ->
-                minecraft.setScreen(new LabDetailsScreen(api, api.snapshot().currentScenario(), true)))
-                .bounds(contentLeft() + 222, TABS_Y, Math.max(90, contentWidth() - 334), 20).build());
-        int searchWidth = (contentWidth() - 102) / 3;
+        // Panel: one filter row, then the list down to the pagination row.
+        int left = panelLeft();
+        int width = panelWidth();
+        int tagWidth = Math.min(90, width / 4);
+        int folderWidth = Math.min(130, width / 3);
+        int searchWidth = width - folderWidth - tagWidth - GAP * 2;
         int cursor = search == null ? query.length() : search.getCursorPosition();
-        search = addRenderableWidget(new EditBox(font, contentLeft(), CATEGORY_Y, searchWidth, 20, Component.literal("Search scenarios")));
+        search = addRenderableWidget(new EditBox(font, left, filterY(), searchWidth, 20, Component.literal("Search scenarios")));
         search.setMaxLength(200);
         search.setHint(Component.literal("Search names or tags..."));
         search.setValue(query);
@@ -128,7 +165,7 @@ final class LabScreen extends Screen {
                     folderCursor = category == null ? 0 : snapshot.categories().stream().map(LabApiClient.Category::name).toList().indexOf(category) + 1;
                     folderOffset = Math.max(0, Math.min(folderCursor, folderCount() - folderCapacity()));
                 })
-                .bounds(contentLeft() + searchWidth + 8, CATEGORY_Y, searchWidth, 20).build());
+                .bounds(left + searchWidth + GAP, filterY(), folderWidth, 20).build());
         categoryButton.setTooltip(Tooltip.create(Component.literal("Choose a folder. Scroll or use arrow keys in the list.")));
         Button tagButton = addRenderableWidget(Button.builder(tag == null ? Component.literal("All tags") : TagStyle.badge(tag), button -> {
             List<String> tags = availableTags(api.snapshot());
@@ -136,39 +173,17 @@ final class LabScreen extends Screen {
             tag = next < tags.size() ? tags.get(next) : null;
             page = 0;
             rebuildWidgets();
-        }).bounds(contentLeft() + (searchWidth + 8) * 2, CATEGORY_Y, searchWidth, 20).build());
+        }).bounds(left + width - tagWidth, filterY(), tagWidth, 20).build());
         tagButton.setTooltip(Tooltip.create(Component.literal("Cycle labels to filter the list across folders. Run folder / Run all still runs the entire folder.")));
-        refreshButton = addRenderableWidget(Button.builder(Component.literal("Refresh"), button -> api.control("refresh", null))
-                .bounds(contentLeft() + contentWidth() - 78, CATEGORY_Y, 78, 20).build());
-        refreshButton.setTooltip(Tooltip.create(Component.literal("Reload scenario YAMLs from disk. The active run keeps its original setup.")));
-        runCategoryButton = addRenderableWidget(Button.builder(Component.literal(runCategoryLabel(snapshot)), button ->
-                        { api.selectCategory(category); minecraft.setScreen(new LabLoadingScreen(api, category == null ? "All scenarios" : category)); })
-                .bounds(contentLeft() + contentWidth() - 106, TABS_Y, 106, 20)
-                .build());
 
         page = Math.min(page, pageCount(snapshot) - 1);
         if (view == View.OVERVIEW) addScenarioButtons(snapshot);
 
-        int pageY = Math.max(TABLE_ROWS_Y + ROW_HEIGHT, height - 48);
-        previousPage = addRenderableWidget(Button.builder(Component.literal("<"), button -> changePage(-1))
-                .bounds(center - 62, pageY, 24, 20)
-                .build());
+        int panelRight = left + width;
         nextPage = addRenderableWidget(Button.builder(Component.literal(">"), button -> changePage(1))
-                .bounds(center + 38, pageY, 24, 20)
-                .build());
-        if (!LabConfig.launchedWithUrl() && snapshot.connection() == null) {
-            addRenderableWidget(Button.builder(Component.literal("Lab address"), button ->
-                    minecraft.setScreen(new LabAddressScreen(api, this)))
-                    .bounds(contentLeft(), pageY, 96, 20).build())
-                    .setTooltip(Tooltip.create(Component.literal("Connect to another lab, such as one in Tailscale remote mode.")));
-        }
-        if (ClientEvents.managed() && snapshot.connection() != null) {
-            teleportButton = addRenderableWidget(Button.builder(Component.literal("Teleport to bot"), button -> ClientEvents.teleportToBot())
-                    .bounds(contentLeft(), pageY, 116, 20).build());
-            teleportButton.setTooltip(Tooltip.create(Component.literal("Jump to the first scenario bot's current position and dimension.")));
-            addRenderableWidget(Button.builder(Component.literal("Join world"), button -> ClientEvents.reconnect())
-                    .bounds(width - 106, pageY, 96, 20).build());
-        }
+                .bounds(panelRight - 20, footerY(), 20, 20).build());
+        previousPage = addRenderableWidget(Button.builder(Component.literal("<"), button -> changePage(-1))
+                .bounds(panelRight - 20 - PAGE_LABEL_WIDTH - 20, footerY(), 20, 20).build());
     }
 
     @Override
@@ -208,11 +223,11 @@ final class LabScreen extends Screen {
         List<LabApiClient.ScenarioStats> statistics = visibleStatistics(snapshot);
         int start = page * rowCapacity();
         int end = Math.min(statistics.size(), start + rowCapacity());
-        int x = contentLeft();
-        int buttonWidth = scenarioColumnWidth() - 52;
+        int x = panelLeft();
+        int buttonWidth = scenarioColumnWidth() - 48;
         for (int index = start; index < end; index++) {
             LabApiClient.ScenarioStats stats = statistics.get(index);
-            int y = TABLE_ROWS_Y + (index - start) * ROW_HEIGHT - 5;
+            int y = rowsY() + (index - start) * ROW_HEIGHT;
             var label = Component.empty();
             for (String tag : snapshot.tagsFor(stats.scenario()))
                 label.append(TagStyle.badge(tag)).append(" ");
@@ -235,13 +250,11 @@ final class LabScreen extends Screen {
         updateControls(snapshot);
         updatePagination(snapshot);
         super.render(graphics, mouseX, mouseY, partialTick);
-        graphics.drawCenteredString(font, title, width / 2, 12, TITLE);
+        String heading = "Mine Labs";
+        graphics.drawString(font, heading, MARGIN, 8, TITLE, false);
         String message = api.notice().isBlank() ? snapshot.message() : api.notice();
-        graphics.drawCenteredString(font, fitWidth(message, contentWidth()), width / 2, 27, snapshot.available() && !api.controlFailed() ? TEXT : BAD);
-        if (snapshot.active() != null && !snapshot.active().goalText().isBlank()) {
-            String condition = "Full goals and live checks: " + ClientEvents.detailsKeyLabel();
-            graphics.drawCenteredString(font, fitWidth(condition, contentWidth()), width / 2, 39, GOOD);
-        }
+        int messageLeft = MARGIN + font.width(heading) + 12;
+        graphics.drawString(font, fitWidth(message, width - messageLeft - MARGIN), messageLeft, 8, snapshot.available() && !api.controlFailed() ? TEXT : BAD, false);
         renderSummary(graphics, snapshot.totals());
         if (view == View.OVERVIEW) renderOverview(graphics, snapshot);
         else renderRecent(graphics, snapshot);
@@ -252,79 +265,84 @@ final class LabScreen extends Screen {
     @Override
     public void renderBackground(GuiGraphics graphics, int mouseX, int mouseY, float partialTick) {
         graphics.fill(0, 0, width, height, 0xF5101726);
+        graphics.fill(MARGIN + sidebarWidth() + 4, HEADER_HEIGHT, MARGIN + sidebarWidth() + 5, height - MARGIN, SIDEBAR_BACKGROUND);
     }
 
+    /** Totals go under the sidebar's controls, when the screen is tall enough for them. */
     private void renderSummary(GuiGraphics graphics, LabApiClient.Totals totals) {
+        int y = sidebarBottom + 8;
+        if (y + 30 > height - MARGIN) return;
         int completed = totals.passed() + totals.failed();
         String rate = completed == 0 ? "—" : Math.round(100.0f * totals.passed() / completed) + "%";
-        String summary = "Last " + totals.runs() + " runs  •  " + totals.passed() + " pass  •  "
-                + totals.failed() + " fail  •  " + totals.cancelled() + " cancelled  •  " + rate + " pass rate";
-        graphics.drawCenteredString(font, summary, width / 2, SUMMARY_Y, TEXT);
-        drawResultBar(graphics, width / 2 - 160, SUMMARY_BAR_Y, 320, 5, totals.passed(), totals.failed(), totals.cancelled());
+        graphics.drawString(font, fitWidth("Last " + totals.runs() + " runs  •  " + rate + " pass", sidebarWidth()), MARGIN, y, TEXT, false);
+        graphics.drawString(font, fitWidth(totals.passed() + " pass  •  " + totals.failed() + " fail  •  " + totals.cancelled() + " cancelled", sidebarWidth()), MARGIN, y + 11, MUTED, false);
+        drawResultBar(graphics, MARGIN, y + 23, sidebarWidth(), 5, totals.passed(), totals.failed(), totals.cancelled());
+        String hint = "Esc or F10 closes";
+        if (y + 44 <= height - MARGIN) graphics.drawString(font, hint, MARGIN, y + 36, MUTED, false);
     }
 
     private void renderOverview(GuiGraphics graphics, LabApiClient.Snapshot snapshot) {
-        int left = contentLeft();
+        int left = panelLeft();
         int nameWidth = scenarioColumnWidth();
         int rateX = left + nameWidth;
         int recordX = rateX + 105;
         int averageX = recordX + 92;
         int recentX = averageX + 74;
-        String testHeader = snapshot.singleScenarioEnabled() ? "TEST  /  CLICK TO LOOP" : "TEST  /  CLICK TO RUN NEXT";
-        graphics.drawString(font, testHeader, left, TABLE_HEADER_Y, MUTED, false);
-        graphics.drawString(font, "PASS RATE / 15", rateX, TABLE_HEADER_Y, MUTED, false);
-        graphics.drawString(font, "RECORD / 15", recordX, TABLE_HEADER_Y, MUTED, false);
-        if (showAverage()) graphics.drawString(font, "AVG", averageX, TABLE_HEADER_Y, MUTED, false);
-        if (showRecentForm()) graphics.drawString(font, "RECENT", recentX, TABLE_HEADER_Y, MUTED, false);
+        String testHeader = snapshot.singleScenarioEnabled() ? "TEST  /  TAP TO LOOP" : "TEST  /  TAP TO RUN NEXT";
+        graphics.drawString(font, fitWidth(testHeader, nameWidth - 8), left, tableHeaderY(), MUTED, false);
+        graphics.drawString(font, "PASS / 15", rateX, tableHeaderY(), MUTED, false);
+        if (showRecord()) graphics.drawString(font, "RECORD / 15", recordX, tableHeaderY(), MUTED, false);
+        if (showAverage()) graphics.drawString(font, "AVG", averageX, tableHeaderY(), MUTED, false);
+        if (showRecentForm()) graphics.drawString(font, "RECENT", recentX, tableHeaderY(), MUTED, false);
 
         List<LabApiClient.ScenarioStats> statistics = visibleStatistics(snapshot);
         int start = page * rowCapacity();
         int end = Math.min(statistics.size(), start + rowCapacity());
         for (int index = start; index < end; index++) {
             LabApiClient.ScenarioStats stats = statistics.get(index);
-            int y = TABLE_ROWS_Y + (index - start) * ROW_HEIGHT;
+            int y = rowsY() + (index - start) * ROW_HEIGHT + 5;
             String rate = stats.passRate() < 0 ? "—" : stats.passRate() + "%";
             graphics.drawString(font, rate, rateX, y, stats.failed() > 0 ? TEXT : GOOD, false);
             drawResultBar(graphics, rateX + 35, y + 2, 58, 5, stats.passed(), stats.failed(), stats.cancelled());
-            graphics.drawString(font, stats.passed() + "P  " + stats.failed() + "F  " + stats.cancelled() + "C", recordX, y, TEXT, false);
+            if (showRecord()) graphics.drawString(font, stats.passed() + "P  " + stats.failed() + "F  " + stats.cancelled() + "C", recordX, y, TEXT, false);
             if (showAverage()) graphics.drawString(font, duration(stats.averageElapsedMs()), averageX, y, MUTED, false);
             if (showRecentForm()) drawRecentOutcomes(graphics, stats.recentOutcomes(), recentX, y);
         }
         if (statistics.isEmpty()) {
-            graphics.drawCenteredString(font, "No matching scenarios. Try a different search or folder.", width / 2, TABLE_ROWS_Y + 12, MUTED);
+            graphics.drawCenteredString(font, fitWidth("No matching scenarios. Try a different search or folder.", panelWidth()), panelLeft() + panelWidth() / 2, rowsY() + 12, MUTED);
         }
     }
 
     private void renderRecent(GuiGraphics graphics, LabApiClient.Snapshot snapshot) {
-        int left = contentLeft();
-        int right = contentLeft() + contentWidth();
-        graphics.drawString(font, "RESULT", left, TABLE_HEADER_Y, MUTED, false);
-        graphics.drawString(font, "TEST", left + 68, TABLE_HEADER_Y, MUTED, false);
-        graphics.drawString(font, "DURATION", right - 142, TABLE_HEADER_Y, MUTED, false);
-        graphics.drawString(font, "FINISHED", right - 72, TABLE_HEADER_Y, MUTED, false);
+        int left = panelLeft();
+        int right = panelLeft() + panelWidth();
+        graphics.drawString(font, "RESULT", left, tableHeaderY(), MUTED, false);
+        graphics.drawString(font, "TEST", left + 68, tableHeaderY(), MUTED, false);
+        graphics.drawString(font, "DURATION", right - 142, tableHeaderY(), MUTED, false);
+        graphics.drawString(font, "FINISHED", right - 72, tableHeaderY(), MUTED, false);
         List<LabApiClient.Result> recent = visibleRecent(snapshot);
         int start = page * rowCapacity();
         int end = Math.min(recent.size(), start + rowCapacity());
         for (int index = start; index < end; index++) {
             LabApiClient.Result result = recent.get(index);
-            int y = TABLE_ROWS_Y + (index - start) * ROW_HEIGHT;
+            int y = rowsY() + (index - start) * ROW_HEIGHT;
             graphics.drawString(font, result.outcome().toUpperCase(Locale.ROOT), left, y, outcomeColor(result.outcome()), false);
-            graphics.drawString(font, compact(result.scenario(), 38), left + 68, y, TEXT, false);
+            graphics.drawString(font, fitWidth(result.scenario(), right - 150 - (left + 68)), left + 68, y, TEXT, false);
             graphics.drawString(font, duration(result.elapsedMs()), right - 142, y, MUTED, false);
             graphics.drawString(font, age(result.finishedAt()), right - 72, y, MUTED, false);
             graphics.drawString(font, compact(result.detail(), detailLimit()), left + 78, y + 10, MUTED, false);
         }
         if (recent.isEmpty()) {
-            graphics.drawCenteredString(font, "No retained test results yet", width / 2, TABLE_ROWS_Y + 12, MUTED);
+            graphics.drawCenteredString(font, "No retained test results yet", panelLeft() + panelWidth() / 2, rowsY() + 12, MUTED);
         }
     }
 
     private void renderFooter(GuiGraphics graphics, LabApiClient.Snapshot snapshot) {
         int pages = pageCount(snapshot);
-        graphics.drawCenteredString(font, (page + 1) + " / " + pages, width / 2, Math.max(TABLE_ROWS_Y + 6, height - 42), MUTED);
-        graphics.drawString(font, visibleStatistics(snapshot).size() + " matching scenarios  |  Stats: latest 15 runs", contentLeft(), height - 18, MUTED, false);
-        String hint = "F10 closes dashboard";
-        graphics.drawString(font, hint, contentLeft() + contentWidth() - font.width(hint), height - 18, MUTED, false);
+        int panelRight = panelLeft() + panelWidth();
+        graphics.drawCenteredString(font, (page + 1) + " / " + pages, panelRight - 20 - PAGE_LABEL_WIDTH / 2, footerY() + 6, MUTED);
+        String count = visibleStatistics(snapshot).size() + " scenarios  •  stats: latest 15 runs";
+        graphics.drawString(font, fitWidth(count, panelWidth() - PAGE_LABEL_WIDTH - 48), panelLeft(), footerY() + 6, MUTED, false);
     }
 
     private void drawRecentOutcomes(GuiGraphics graphics, List<String> outcomes, int x, int y) {
@@ -464,25 +482,27 @@ final class LabScreen extends Screen {
         return category == null ? "Run all" : "Run folder";
     }
 
+    private int sidebarWidth() { return Math.max(140, Math.min(180, width / 4)); }
+    private int panelLeft() { return MARGIN + sidebarWidth() + 10; }
+    private int panelWidth() { return width - panelLeft() - MARGIN; }
+    private int filterY() { return HEADER_HEIGHT + GAP; }
+    private int tableHeaderY() { return filterY() + 28; }
+    private int rowsY() { return tableHeaderY() + 12; }
+    private int footerY() { return height - MARGIN - 20; }
+
     private int rowCapacity() {
-        return Math.max(1, (height - TABLE_ROWS_Y - 67) / ROW_HEIGHT);
-    }
-
-    private int contentWidth() {
-        return Math.max(296, Math.min(820, width - 24));
-    }
-
-    private int contentLeft() {
-        return (width - contentWidth()) / 2;
+        return Math.max(1, (footerY() - GAP - rowsY()) / ROW_HEIGHT);
     }
 
     private int scenarioColumnWidth() {
-        return contentWidth() - (showRecentForm() ? 360 : showAverage() ? 275 : 197);
+        return panelWidth() - (showRecentForm() ? 360 : showAverage() ? 275 : showRecord() ? 197 : 100);
     }
 
     private int folderCount() { return api.snapshot().categories().size() + 1; }
-    private int folderCapacity() { return Math.max(1, Math.min(10, (height - CATEGORY_Y - 52) / 20)); }
-    private int folderWidth() { return Math.min(Math.max(260, categoryButton.getWidth()), width - categoryButton.getX() - 12); }
+    private int folderCapacity() { return Math.max(1, Math.min(10, (height - filterY() - 52) / 20)); }
+    private int folderWidth() { return Math.min(Math.max(200, categoryButton.getWidth()), width - 2 * MARGIN); }
+    /** The folder list opens under its button, shifted left if it would run off the screen. */
+    private int folderX() { return Math.max(MARGIN, Math.min(categoryButton.getX(), width - MARGIN - folderWidth())); }
 
     private String folderName(int index) {
         if (index == 0) return "All folders (" + api.snapshot().scenarios().size() + ")";
@@ -491,8 +511,8 @@ final class LabScreen extends Screen {
     }
 
     private void renderFolders(GuiGraphics graphics, int mouseX, int mouseY) {
-        int x = categoryButton.getX();
-        int y = CATEGORY_Y + 22;
+        int x = folderX();
+        int y = filterY() + 22;
         int rows = Math.min(folderCapacity(), folderCount());
         graphics.pose().pushPose();
         graphics.pose().translate(0, 0, 300);
@@ -525,9 +545,9 @@ final class LabScreen extends Screen {
     @Override
     public boolean mouseClicked(double x, double y, int button) {
         if (folderOpen) {
-            int row = (int) ((y - CATEGORY_Y - 22) / 20);
-            if (x >= categoryButton.getX() && x < categoryButton.getX() + folderWidth()
-                    && y >= CATEGORY_Y + 22 && row < folderCapacity() && folderOffset + row < folderCount()) {
+            int row = (int) ((y - filterY() - 22) / 20);
+            if (x >= folderX() && x < folderX() + folderWidth()
+                    && y >= filterY() + 22 && row < folderCapacity() && folderOffset + row < folderCount()) {
                 chooseFolder(folderOffset + row);
             } else folderOpen = false;
             return true;
@@ -537,7 +557,14 @@ final class LabScreen extends Screen {
 
     @Override
     public boolean mouseScrolled(double x, double y, double deltaX, double deltaY) {
-        if (!folderOpen) return super.mouseScrolled(x, y, deltaX, deltaY);
+        if (!folderOpen) {
+            // Scrolling over the list turns its pages.
+            if (x >= panelLeft() && y >= rowsY() && y < footerY() && deltaY != 0) {
+                changePage(deltaY < 0 ? 1 : -1);
+                return true;
+            }
+            return super.mouseScrolled(x, y, deltaX, deltaY);
+        }
         folderOffset = Math.max(0, Math.min(Math.max(0, folderCount() - folderCapacity()), folderOffset - (int) Math.signum(deltaY) * 3));
         folderCursor = Math.max(folderOffset, Math.min(folderOffset + folderCapacity() - 1, folderCursor));
         return true;
@@ -561,16 +588,21 @@ final class LabScreen extends Screen {
         return super.keyPressed(key, scan, modifiers);
     }
 
+    /** Stats columns appear as the panel widens, after a scenario name has room. */
+    private boolean showRecord() {
+        return panelWidth() >= 340;
+    }
+
     private boolean showAverage() {
-        return contentWidth() >= 500;
+        return panelWidth() >= 430;
     }
 
     private boolean showRecentForm() {
-        return contentWidth() >= 680;
+        return panelWidth() >= 560;
     }
 
     private int detailLimit() {
-        return Math.max(20, (contentWidth() - 90) / 6);
+        return Math.max(20, (panelWidth() - 90) / 6);
     }
 
     private Component tabLabel(String label, View target) {
