@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { describeGoal } from "../trial/goals.js";
 import type { RunResult } from "../trial/run.js";
 import type { SessionOptions, SessionScenario, TrialContext } from "./run.js";
+import { sessionScenarioName } from "./scenario-name.js";
 import { createSessionWorker } from "./worker.js";
 
 interface Preparation {
@@ -88,7 +89,7 @@ export function createClientSessionWorker(
     // in results. Clients keep this artifact path until they have stopped.
     const context: TrialContext = {
       trialId: `preparing-${id}`, sequence: 0, workerIndex: 0, cycle: 0,
-      scenarioIndex: 0, scenarioCount: 0, scenario: entry.id ?? entry.scenario.name ?? "scenario",
+      scenarioIndex: 0, scenarioCount: 0, scenario: sessionScenarioName(entry),
       goalText: describeGoal(entry.scenario.goal), runDir: directory, startedAt: new Date().toISOString(),
     };
     const signals = [cancellation.signal, options.signal, options.controller?.signal]
@@ -128,7 +129,7 @@ export function createClientSessionWorker(
       // A retiring server must release its resources before another is booted.
       await retiring;
       if (requestedRevision !== revision || !entry || !running) return;
-      options.log(`Preparing next scenario: ${entry.id ?? entry.scenario.name}`);
+      options.log(`Preparing next scenario: ${sessionScenarioName(entry)}`);
       standby = prepare(entry);
     });
     void refreshTail.catch(() => undefined);

@@ -1,9 +1,9 @@
 package dev.minelabs.ui;
 
 import com.mojang.blaze3d.platform.InputConstants;
+import java.util.List;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
-import java.util.List;
 import net.minecraft.client.gui.components.AbstractWidget;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.components.events.GuiEventListener;
@@ -92,11 +92,13 @@ final class ClientEvents {
     /**
      * Open the dashboard from a menu button, which is how a touch client gets
      * there: F10 needs a keyboard. A player's own client has nowhere to connect
-     * until it is given a lab address, so that screen comes first.
+     * until it is given a lab address, so that screen comes first. A launch
+     * property already names the lab, and would override a typed address anyway.
      */
     private static Button dashboardButton(Screen parent, int x, int y, int width) {
+        boolean hasLab = managed() || LabConfig.launchedWithUrl();
         return Button.builder(Component.literal("Mine Labs"), button ->
-                Minecraft.getInstance().setScreen(managed() ? DASHBOARD : new LabAddressScreen(API, parent)))
+                Minecraft.getInstance().setScreen(hasLab ? DASHBOARD : new LabAddressScreen(API, parent)))
                 .bounds(x, y, width, 20).build();
     }
 
@@ -224,9 +226,8 @@ final class ClientEvents {
             } else if (target != null && !target.id().equals(connectionId)) {
                 connectionId = target.id();
                 if (minecraft.level != null) minecraft.disconnect(DASHBOARD);
-                Screen parent = DASHBOARD;
                 MineLabsUiMod.LOGGER.info("Mine Labs connecting to {} ({})", target.address(), target.id());
-                ConnectScreen.startConnecting(parent, minecraft, ServerAddress.parseString(target.address()),
+                ConnectScreen.startConnecting(DASHBOARD, minecraft, ServerAddress.parseString(target.address()),
                         new ServerData("Mine Labs", target.address(), ServerData.Type.OTHER), false, null);
             }
         }

@@ -1,20 +1,21 @@
 # Mine Labs UI client mod
 
-Client-only NeoForge 1.21.4 UI for Mine Labs. It polls the session's loopback-only
-control API, renders a compact test HUD, and opens
-the control dashboard with F10. The HUD and dashboard show the active scenario's
-success condition. Its Overview tab summarizes rolling pass rates,
+Client-only NeoForge 1.21.4 UI for Mine Labs. It polls the session's control API,
+renders a compact test HUD, and opens
+the control dashboard with F10 or the **Mine Labs** button under the title and
+pause menus. The HUD and dashboard show the active scenario's
+success condition. Its Scenarios tab summarizes rolling pass rates,
 records, and average durations over the latest 15 results per scenario, with the
 latest five outcomes shown separately. The dashboard can toggle
-Keep running without ending the command; Recent runs keeps the individual
+Keep running without ending the command; the Recent tab keeps the individual
 result details. Scenario folders become catalogue categories automatically: use
-the folder row to browse one category or make that folder the active suite. The
+the folder picker to browse one category or make that folder the active suite. The
 Minecraft server does not load this mod.
 
 Use **Repeat: FOLDER** to advance through the active suite scope or switch it to
 **Repeat: ONE** to repeat the active scenario. Clicking a scenario while Repeat:
 ONE is active changes the repeated target. **Run folder** limits the suite scope
-to the displayed folder; return to **Folder: ALL** and choose **Run all** to
+to the displayed folder; return to **All folders** and choose **Run all** to
 restore the full catalogue.
 
 ## Development build and manual installation
@@ -35,6 +36,21 @@ Manual copying only installs the mod; it does not start a Mine Labs session.
 To connect it to a running local session, set the client JVM property
 `-Dminelabs.uiUrl=http://127.0.0.1:PORT` to that session's control API port. You can
 choose a fixed port with `run --spectator --ui-port PORT`.
+
+## A player's own client
+
+A client that Mine Labs did not launch, such as a phone running Amethyst in
+Tailscale remote mode, needs the lab address: choose
+**Mine Labs** on the title screen, pause menu or multiplayer screen, or **Lab
+address** in the dashboard. A bare host, `host:port` or full `http://` URL is
+accepted; the port defaults to 25578. The address is saved as `labUrl` in
+`config/mine_labs_ui.properties`, and a saved address makes the client behave as
+a managed one. A launch property always wins over the saved address.
+
+Every request carries an `X-Mine-Labs-Player` header with the player's name, so a
+remote lab knows whom to wait for. When the status includes `clientProperties`,
+the mod sets them as JVM system properties for the lab's spectator mods, except
+`minelabs.*` keys and properties the JVM was launched with.
 
 ## Managed client
 
@@ -74,7 +90,7 @@ relative to the bot's current position and heading. It is available while you ar
 the bot is online; it does not require Mine AI's separate observer mod.
 
 **Info** beside a scenario previews its complete conditions without starting it.
-**Scenario details** opens the current or most recent run's original conditions,
+**Details** opens the current or most recent run's original conditions,
 including after a catalog refresh. Its **Goals** tab preserves nested AND/OR
 requirements and shows the latest observed status and detail for every condition,
 plus the overall time limit. **Starting setup** lists world rules, players,

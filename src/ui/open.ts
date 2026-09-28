@@ -4,6 +4,7 @@ import { loadRunCatalog } from "../scenario/catalog.js";
 import { inspectScenario } from "../scenario/inspection.js";
 import { SessionController } from "../session/controller.js";
 import { runSession } from "../session/run.js";
+import { sessionScenarioName } from "../session/scenario-name.js";
 import { DEFAULT_UI_PORT, startUiServer, type UiRemoteClient } from "./server.js";
 import { buildRemoteClientMod, launchSpectatorClient, SPECTATOR_USERNAME } from "./launch.js";
 import { tailscaleAddress } from "./tailscale.js";
@@ -43,22 +44,27 @@ export async function openLab(options: {
   }
   else if (options.repeat !== undefined) controller.queueBatch(catalog.scenarios.length * options.repeat);
   else if (catalog.initial) controller.selectScenario(catalog.initial);
+  // Headroom for the dashboard to raise parallelism beyond the starting --jobs.
+  const maxJobs = Math.max(8, options.jobs ?? 1);
   const stop = (): void => controller.stop();
   let client: Awaited<ReturnType<typeof launchSpectatorClient>> | undefined;
   let clientFailure: unknown;
   const ui = await startUiServer({
     // A remote client keeps its lab address between sessions, so remote mode keeps the port too.
-    controller, rootDir, port: options.uiPort ?? (remote ? DEFAULT_UI_PORT : 0), host, remote, log: options.log, maxJobs: Math.max(8, options.jobs ?? 1),
+    controller, rootDir, port: options.uiPort ?? (remote ? DEFAULT_UI_PORT : 0), host, remote, log: options.log, maxJobs,
     refreshCatalog: async () => {
       // Validate the whole replacement before publishing it. Active trials retain
       // their original entry; the scheduler reads this array on its next claim.
       const refreshed = await loadRunCatalog(options.paths, SPECTATOR_USERNAME);
       const nextSetup = await collectSpectatorSetup(refreshed.scenarios.map(({ scenario }) => scenario));
       if (spectatorSetupKey(nextSetup) !== spectatorSetupKey(spectatorSetup)) {
-        throw new Error("Spectator mods or JVM properties changed. Restart Mine Labs with --spectator to load them.");
+        throw new Error(`Spectator mods or JVM properties changed. Restart Mine Labs with ${remote ? "--tailscale" : "--spectator"} to load them.`);
       }
       catalog.scenarios.splice(0, catalog.scenarios.length, ...refreshed.scenarios);
-      return catalog.scenarios.map(({ id, scenario, category }) => ({ name: id ?? scenario.name ?? "scenario", category: category ?? "other", inspection: inspectScenario(id ?? scenario.name ?? "scenario", scenario) }));
+      return catalog.scenarios.map((entry) => {
+        const name = sessionScenarioName(entry);
+        return { name, category: entry.category ?? "other", inspection: inspectScenario(name, entry.scenario) };
+      });
     },
   });
   options.signal?.addEventListener("abort", stop, { once: true });
@@ -85,7 +91,7 @@ export async function openLab(options: {
     }
     await runSession({
       scenarios: catalog.scenarios, rootDir, spectator, host,
-      jobs: options.jobs, maxJobs: Math.max(8, options.jobs ?? 1), isolated: options.isolated, keepRuns: options.keepRuns,
+      jobs: options.jobs, maxJobs, isolated: options.isolated, keepRuns: options.keepRuns,
       controller, observer: ui, log: options.log, preferPort: options.preferPort, delayMs: 0,
     });
     if (clientFailure) throw clientFailure;

@@ -19,6 +19,10 @@ import net.neoforged.fml.loading.FMLPaths;
  * here instead. A launch property always wins over the saved address.
  */
 final class LabConfig {
+    /** The JVM property a managed launch passes the lab address in. */
+    static final String URL_PROPERTY = "minelabs.uiUrl";
+    /** The lab's control API port, when an address does not name one. */
+    static final int DEFAULT_PORT = 25578;
     private static final String URL_KEY = "labUrl";
     private static final Path FILE = FMLPaths.CONFIGDIR.get().resolve("mine_labs_ui.properties");
     /** Read once; the dashboard asks every frame. */
@@ -28,7 +32,7 @@ final class LabConfig {
     }
 
     static boolean launchedWithUrl() {
-        return System.getProperty("minelabs.uiUrl") != null;
+        return System.getProperty(URL_PROPERTY) != null;
     }
 
     /** The saved address, or an empty string when none has been entered. */
@@ -37,8 +41,8 @@ final class LabConfig {
     }
 
     private static String load() {
-        Properties properties = new Properties();
         if (!Files.isRegularFile(FILE)) return "";
+        Properties properties = new Properties();
         try (Reader reader = Files.newBufferedReader(FILE, StandardCharsets.UTF_8)) {
             properties.load(reader);
         } catch (IOException error) {
@@ -70,7 +74,7 @@ final class LabConfig {
         try {
             URI uri = URI.create(value);
             if (!"http".equals(uri.getScheme()) || uri.getHost() == null) return null;
-            int port = uri.getPort() == -1 ? 25578 : uri.getPort();
+            int port = uri.getPort() == -1 ? DEFAULT_PORT : uri.getPort();
             return "http://" + uri.getHost() + ":" + port;
         } catch (IllegalArgumentException invalid) {
             return null;

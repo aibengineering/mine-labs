@@ -3,9 +3,9 @@ package dev.minelabs.ui;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import net.minecraft.ChatFormatting;
-import java.util.Locale;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.components.EditBox;
@@ -15,6 +15,12 @@ import net.minecraft.client.gui.screens.TitleScreen;
 import net.minecraft.network.chat.Component;
 import org.lwjgl.glfw.GLFW;
 
+/**
+ * The dashboard, in two columns: controls stacked in a narrow sidebar on the
+ * left, and the scenario list using the full height on the right. On a phone,
+ * where the scaled screen is short, a single centred column left room for only
+ * a few scenarios below its rows of controls.
+ */
 final class LabScreen extends Screen {
     private static final int TITLE = 0xFFF4F8FF;
     private static final int TEXT = 0xFFDDE8FA;
@@ -22,47 +28,48 @@ final class LabScreen extends Screen {
     private static final int GOOD = 0xFF79D99A;
     private static final int BAD = 0xFFFF7070;
     private static final int BAR_BACKGROUND = 0xFF273143;
-    private static final int SIDEBAR_BACKGROUND = 0x40FFFFFF;
-    /**
-     * Two columns: controls stacked in a narrow sidebar on the left, and the
-     * scenario list using the full height on the right. On a phone, where the
-     * scaled screen is short, a single centred column left room for only a few
-     * scenarios below its rows of controls.
-     */
+    private static final int DIVIDER = 0x40FFFFFF;
     private static final int MARGIN = 8;
     private static final int GAP = 4;
+    /** Between the sidebar and the panel; the divider line sits in its middle. */
+    private static final int COLUMN_GAP = 10;
     private static final int HEADER_HEIGHT = 22;
+    /** Sidebar rows: a 20px button and a 2px gap. */
     private static final int CONTROL_PITCH = 22;
     private static final int ROW_HEIGHT = 20;
+    private static final int INFO_WIDTH = 40;
+    private static final int PAGE_BUTTON_WIDTH = 20;
+    private static final int PAGE_LABEL_WIDTH = 44;
+    private static final int FOLDER_ROW_HEIGHT = 20;
 
     private final LabApiClient api;
     private View view = View.OVERVIEW;
     private String category;
     private String tag;
-    private Map<String, List<String>> displayedTags = Map.of();
     private int page;
-    private Button continuousButton;
-    private Button autoStartButton;
-    private Button startButton;
-    private Button singleScenarioButton;
-    private Button previousPage;
-    private Button nextPage;
-    private Button categoryButton;
-    private Button runCategoryButton;
-    private List<String> displayedScenarios = List.of();
-    private boolean displayedConnection;
     private String query = "";
-    private EditBox search;
+    private List<String> displayedScenarios = List.of();
+    private Map<String, List<String>> displayedTags = Map.of();
+    private boolean displayedConnection;
     private boolean filtersDirty;
     private boolean folderOpen;
     private int folderOffset;
     private int folderCursor;
-    private Button refreshButton;
-    private Button teleportButton;
-    private Button detailsButton;
-    private Button jobsButton;
+    /** Where the sidebar's controls end; the run totals go below. */
     private int sidebarBottom;
-    private static final int PAGE_LABEL_WIDTH = 44;
+    private Button startButton;
+    private Button detailsButton;
+    private Button refreshButton;
+    private Button autoStartButton;
+    private Button continuousButton;
+    private Button singleScenarioButton;
+    private Button jobsButton;
+    private Button runCategoryButton;
+    private Button teleportButton;
+    private EditBox search;
+    private Button categoryButton;
+    private Button previousPage;
+    private Button nextPage;
 
     LabScreen(LabApiClient api) {
         super(Component.literal("Mine Labs test dashboard"));
@@ -79,7 +86,22 @@ final class LabScreen extends Screen {
         displayedConnection = snapshot.connection() != null;
         normalizeCategory(snapshot);
 
-        // Sidebar: full-width buttons for the main actions, pairs for the rest.
+        sidebarBottom = addSidebar(snapshot);
+        addFilters(snapshot);
+        page = Math.min(page, pageCount(snapshot) - 1);
+        if (view == View.OVERVIEW) addScenarioButtons(snapshot);
+        int pageLeft = pagerLeft();
+        previousPage = addRenderableWidget(Button.builder(Component.literal("<"), button -> changePage(-1))
+                .bounds(pageLeft, footerY(), PAGE_BUTTON_WIDTH, 20).build());
+        nextPage = addRenderableWidget(Button.builder(Component.literal(">"), button -> changePage(1))
+                .bounds(pageLeft + PAGE_BUTTON_WIDTH + PAGE_LABEL_WIDTH, footerY(), PAGE_BUTTON_WIDTH, 20).build());
+    }
+
+    /**
+     * Full-width buttons for the main actions, pairs for the rest.
+     * Returns the bottom edge of the last row.
+     */
+    private int addSidebar(LabApiClient.Snapshot snapshot) {
         int x = MARGIN;
         int full = sidebarWidth();
         int half = (full - GAP) / 2;
@@ -119,11 +141,15 @@ final class LabScreen extends Screen {
                     api.setJobs(current.jobs() >= current.maxJobs() ? 1 : current.jobs() + 1);
                 })
                 .bounds(right, y, half, 20).build());
+        jobsButton.setTooltip(Tooltip.create(Component.literal("Selecting a scenario runs one copy per worker. A folder runs each scenario once. The camera follows worker 1. Change while idle.")));
         y += CONTROL_PITCH;
-        runCategoryButton = addRenderableWidget(Button.builder(Component.literal(runCategoryLabel(snapshot)), button ->
+        runCategoryButton = addRenderableWidget(Button.builder(Component.literal(runCategoryLabel()), button ->
                         { api.selectCategory(category); minecraft.setScreen(new LabLoadingScreen(api, category == null ? "All scenarios" : category)); })
                 .bounds(x, y, full, 20).build());
         y += CONTROL_PITCH;
+        // A connected managed client can reach the bot's world; any other client
+        // not launched with an address can be pointed at a lab instead.
+        teleportButton = null;
         if (ClientEvents.managed() && snapshot.connection() != null) {
             teleportButton = addRenderableWidget(Button.builder(Component.literal("Teleport to bot"), button -> ClientEvents.teleportToBot())
                     .bounds(x, y, half, 20).build());
@@ -145,14 +171,15 @@ final class LabScreen extends Screen {
                 .bounds(x, y, half, 20).build());
         addRenderableWidget(Button.builder(Component.literal(ClientEvents.managed() ? "Exit Labs" : "Stop run"), button -> api.control("stop", null))
                 .bounds(right, y, half, 20).build());
-        sidebarBottom = y + 20;
+        return y + 20;
+    }
 
-        // Panel: one filter row, then the list down to the pagination row.
+    /** One row above the list: search on the left, then the folder and tag pickers. */
+    private void addFilters(LabApiClient.Snapshot snapshot) {
         int left = panelLeft();
-        int width = panelWidth();
-        int tagWidth = Math.min(90, width / 4);
-        int folderWidth = Math.min(130, width / 3);
-        int searchWidth = width - folderWidth - tagWidth - GAP * 2;
+        int tagWidth = Math.min(90, panelWidth() / 4);
+        int folderButtonWidth = Math.min(130, panelWidth() / 3);
+        int searchWidth = panelWidth() - folderButtonWidth - tagWidth - GAP * 2;
         int cursor = search == null ? query.length() : search.getCursorPosition();
         search = addRenderableWidget(new EditBox(font, left, filterY(), searchWidth, 20, Component.literal("Search scenarios")));
         search.setMaxLength(200);
@@ -165,7 +192,7 @@ final class LabScreen extends Screen {
                     folderCursor = category == null ? 0 : snapshot.categories().stream().map(LabApiClient.Category::name).toList().indexOf(category) + 1;
                     folderOffset = Math.max(0, Math.min(folderCursor, folderCount() - folderCapacity()));
                 })
-                .bounds(left + searchWidth + GAP, filterY(), folderWidth, 20).build());
+                .bounds(left + searchWidth + GAP, filterY(), folderButtonWidth, 20).build());
         categoryButton.setTooltip(Tooltip.create(Component.literal("Choose a folder. Scroll or use arrow keys in the list.")));
         Button tagButton = addRenderableWidget(Button.builder(tag == null ? Component.literal("All tags") : TagStyle.badge(tag), button -> {
             List<String> tags = availableTags(api.snapshot());
@@ -173,17 +200,8 @@ final class LabScreen extends Screen {
             tag = next < tags.size() ? tags.get(next) : null;
             page = 0;
             rebuildWidgets();
-        }).bounds(left + width - tagWidth, filterY(), tagWidth, 20).build());
+        }).bounds(panelRight() - tagWidth, filterY(), tagWidth, 20).build());
         tagButton.setTooltip(Tooltip.create(Component.literal("Cycle labels to filter the list across folders. Run folder / Run all still runs the entire folder.")));
-
-        page = Math.min(page, pageCount(snapshot) - 1);
-        if (view == View.OVERVIEW) addScenarioButtons(snapshot);
-
-        int panelRight = left + width;
-        nextPage = addRenderableWidget(Button.builder(Component.literal(">"), button -> changePage(1))
-                .bounds(panelRight - 20, footerY(), 20, 20).build());
-        previousPage = addRenderableWidget(Button.builder(Component.literal("<"), button -> changePage(-1))
-                .bounds(panelRight - 20 - PAGE_LABEL_WIDTH - 20, footerY(), 20, 20).build());
     }
 
     @Override
@@ -201,16 +219,17 @@ final class LabScreen extends Screen {
 
     @Override
     public void tick() {
+        LabApiClient.Snapshot snapshot = api.snapshot();
         // The title screen can open before the first HTTP response arrives.
-        if (filtersDirty || !displayedTags.equals(api.snapshot().scenarioTags()) || !displayedScenarios.equals(api.snapshot().scenarios())
-                || displayedConnection != (api.snapshot().connection() != null)) {
+        if (filtersDirty || !displayedTags.equals(snapshot.scenarioTags()) || !displayedScenarios.equals(snapshot.scenarios())
+                || displayedConnection != (snapshot.connection() != null)) {
             filtersDirty = false;
-            normalizeCategory(api.snapshot());
+            normalizeCategory(snapshot);
             folderOpen = false;
             rebuildWidgets();
         }
-        if (api.snapshot().phase().equals("preparing") || api.snapshot().phase().equals("returning")) {
-            minecraft.setScreen(new LabLoadingScreen(api, api.snapshot().active() == null ? api.snapshot().message() : api.snapshot().active().scenario()));
+        if (snapshot.phase().equals("preparing") || snapshot.phase().equals("returning")) {
+            minecraft.setScreen(new LabLoadingScreen(api, snapshot.active() == null ? snapshot.message() : snapshot.active().scenario()));
         }
     }
 
@@ -224,7 +243,8 @@ final class LabScreen extends Screen {
         int start = page * rowCapacity();
         int end = Math.min(statistics.size(), start + rowCapacity());
         int x = panelLeft();
-        int buttonWidth = scenarioColumnWidth() - 48;
+        // The name button and its Info button fill the name column, less a gap before the stats.
+        int buttonWidth = scenarioColumnWidth() - INFO_WIDTH - 2 * GAP;
         for (int index = start; index < end; index++) {
             LabApiClient.ScenarioStats stats = statistics.get(index);
             int y = rowsY() + (index - start) * ROW_HEIGHT;
@@ -240,7 +260,7 @@ final class LabScreen extends Screen {
             addRenderableWidget(button);
             addRenderableWidget(Button.builder(Component.literal("Info"), ignored ->
                     minecraft.setScreen(new LabDetailsScreen(api, stats.scenario(), false)))
-                    .bounds(x + buttonWidth + 4, y, 40, 18).build());
+                    .bounds(x + buttonWidth + GAP, y, INFO_WIDTH, 18).build());
         }
     }
 
@@ -265,7 +285,8 @@ final class LabScreen extends Screen {
     @Override
     public void renderBackground(GuiGraphics graphics, int mouseX, int mouseY, float partialTick) {
         graphics.fill(0, 0, width, height, 0xF5101726);
-        graphics.fill(MARGIN + sidebarWidth() + 4, HEADER_HEIGHT, MARGIN + sidebarWidth() + 5, height - MARGIN, SIDEBAR_BACKGROUND);
+        int dividerX = sidebarRight() + COLUMN_GAP / 2 - 1;
+        graphics.fill(dividerX, HEADER_HEIGHT, dividerX + 1, height - MARGIN, DIVIDER);
     }
 
     /** Totals go under the sidebar's controls, when the screen is tall enough for them. */
@@ -300,6 +321,7 @@ final class LabScreen extends Screen {
         int end = Math.min(statistics.size(), start + rowCapacity());
         for (int index = start; index < end; index++) {
             LabApiClient.ScenarioStats stats = statistics.get(index);
+            // Level with the text on the row's 18px scenario button.
             int y = rowsY() + (index - start) * ROW_HEIGHT + 5;
             String rate = stats.passRate() < 0 ? "—" : stats.passRate() + "%";
             graphics.drawString(font, rate, rateX, y, stats.failed() > 0 ? TEXT : GOOD, false);
@@ -309,17 +331,19 @@ final class LabScreen extends Screen {
             if (showRecentForm()) drawRecentOutcomes(graphics, stats.recentOutcomes(), recentX, y);
         }
         if (statistics.isEmpty()) {
-            graphics.drawCenteredString(font, fitWidth("No matching scenarios. Try a different search or folder.", panelWidth()), panelLeft() + panelWidth() / 2, rowsY() + 12, MUTED);
+            graphics.drawCenteredString(font, fitWidth("No matching scenarios. Try a different search or folder.", panelWidth()), panelCenter(), rowsY() + 12, MUTED);
         }
     }
 
     private void renderRecent(GuiGraphics graphics, LabApiClient.Snapshot snapshot) {
         int left = panelLeft();
-        int right = panelLeft() + panelWidth();
+        int testX = left + 68;
+        int durationX = panelRight() - 142;
+        int finishedX = panelRight() - 72;
         graphics.drawString(font, "RESULT", left, tableHeaderY(), MUTED, false);
-        graphics.drawString(font, "TEST", left + 68, tableHeaderY(), MUTED, false);
-        graphics.drawString(font, "DURATION", right - 142, tableHeaderY(), MUTED, false);
-        graphics.drawString(font, "FINISHED", right - 72, tableHeaderY(), MUTED, false);
+        graphics.drawString(font, "TEST", testX, tableHeaderY(), MUTED, false);
+        graphics.drawString(font, "DURATION", durationX, tableHeaderY(), MUTED, false);
+        graphics.drawString(font, "FINISHED", finishedX, tableHeaderY(), MUTED, false);
         List<LabApiClient.Result> recent = visibleRecent(snapshot);
         int start = page * rowCapacity();
         int end = Math.min(recent.size(), start + rowCapacity());
@@ -327,22 +351,22 @@ final class LabScreen extends Screen {
             LabApiClient.Result result = recent.get(index);
             int y = rowsY() + (index - start) * ROW_HEIGHT;
             graphics.drawString(font, result.outcome().toUpperCase(Locale.ROOT), left, y, outcomeColor(result.outcome()), false);
-            graphics.drawString(font, fitWidth(result.scenario(), right - 150 - (left + 68)), left + 68, y, TEXT, false);
-            graphics.drawString(font, duration(result.elapsedMs()), right - 142, y, MUTED, false);
-            graphics.drawString(font, age(result.finishedAt()), right - 72, y, MUTED, false);
-            graphics.drawString(font, compact(result.detail(), detailLimit()), left + 78, y + 10, MUTED, false);
+            graphics.drawString(font, fitWidth(result.scenario(), durationX - 8 - testX), testX, y, TEXT, false);
+            graphics.drawString(font, duration(result.elapsedMs()), durationX, y, MUTED, false);
+            graphics.drawString(font, age(result.finishedAt()), finishedX, y, MUTED, false);
+            // The detail runs under the whole row, indented under the test name.
+            graphics.drawString(font, fitWidth(result.detail(), panelRight() - testX - 10), testX + 10, y + 10, MUTED, false);
         }
         if (recent.isEmpty()) {
-            graphics.drawCenteredString(font, "No retained test results yet", panelLeft() + panelWidth() / 2, rowsY() + 12, MUTED);
+            graphics.drawCenteredString(font, "No retained test results yet", panelCenter(), rowsY() + 12, MUTED);
         }
     }
 
     private void renderFooter(GuiGraphics graphics, LabApiClient.Snapshot snapshot) {
-        int pages = pageCount(snapshot);
-        int panelRight = panelLeft() + panelWidth();
-        graphics.drawCenteredString(font, (page + 1) + " / " + pages, panelRight - 20 - PAGE_LABEL_WIDTH / 2, footerY() + 6, MUTED);
+        int textY = footerY() + 6;
         String count = visibleStatistics(snapshot).size() + " scenarios  •  stats: latest 15 runs";
-        graphics.drawString(font, fitWidth(count, panelWidth() - PAGE_LABEL_WIDTH - 48), panelLeft(), footerY() + 6, MUTED, false);
+        graphics.drawString(font, fitWidth(count, pagerLeft() - GAP * 2 - panelLeft()), panelLeft(), textY, MUTED, false);
+        graphics.drawCenteredString(font, (page + 1) + " / " + pageCount(snapshot), pagerLeft() + PAGE_BUTTON_WIDTH + PAGE_LABEL_WIDTH / 2, textY, MUTED);
     }
 
     private void drawRecentOutcomes(GuiGraphics graphics, List<String> outcomes, int x, int y) {
@@ -399,34 +423,28 @@ final class LabScreen extends Screen {
     }
 
     private void updateControls(LabApiClient.Snapshot snapshot) {
-        if (continuousButton == null) return;
+        if (continuousButton == null) return; // Not initialised yet.
         jobsButton.setMessage(Component.literal("Parallel: " + snapshot.jobs()));
         jobsButton.active = snapshot.available() && snapshot.activeCount() == 0 && api.pendingAction() == null
                 && !snapshot.phase().equals("preparing") && !snapshot.phase().equals("returning");
-        jobsButton.setTooltip(Tooltip.create(Component.literal("Selecting a scenario runs one copy per worker. A folder runs each scenario once. The camera follows worker 1. Change while idle.")));
-        if (detailsButton != null) detailsButton.active = !snapshot.currentScenario().isBlank();
+        detailsButton.active = !snapshot.currentScenario().isBlank();
         if (teleportButton != null) teleportButton.active = ClientEvents.canTeleportToBot();
-        continuousButton.setMessage(continuousLabel(snapshot));
-        continuousButton.active = snapshot.available()
+        boolean canControl = snapshot.available()
                 && api.pendingAction() == null
                 && !snapshot.phase().equals("stopping")
                 && !snapshot.phase().equals("stopped");
+        continuousButton.setMessage(continuousLabel(snapshot));
+        continuousButton.active = canControl;
         autoStartButton.setMessage(Component.literal("Auto-start: " + (snapshot.autoStartEnabled() ? "ON" : "OFF")));
-        autoStartButton.active = continuousButton.active && ClientEvents.managed();
-        startButton.active = continuousButton.active && !snapshot.awaitingStartTrialId().isBlank();
-        if (singleScenarioButton != null) {
-            singleScenarioButton.setMessage(singleScenarioLabel(snapshot));
-            singleScenarioButton.active = continuousButton.active;
-        }
-        if (categoryButton != null) categoryButton.setMessage(Component.literal(categoryLabel(snapshot)));
-        if (refreshButton != null) {
-            refreshButton.active = continuousButton.active;
-            refreshButton.setMessage(Component.literal("refresh".equals(api.pendingAction()) ? "Refreshing..." : "Refresh"));
-        }
-        if (runCategoryButton != null) {
-            runCategoryButton.setMessage(Component.literal(runCategoryLabel(snapshot)));
-            runCategoryButton.active = continuousButton.active;
-        }
+        autoStartButton.active = canControl && ClientEvents.managed();
+        startButton.active = canControl && !snapshot.awaitingStartTrialId().isBlank();
+        singleScenarioButton.setMessage(singleScenarioLabel(snapshot));
+        singleScenarioButton.active = canControl;
+        categoryButton.setMessage(Component.literal(categoryLabel(snapshot)));
+        refreshButton.active = canControl;
+        refreshButton.setMessage(Component.literal("refresh".equals(api.pendingAction()) ? "Refreshing..." : "Refresh"));
+        runCategoryButton.setMessage(Component.literal(runCategoryLabel()));
+        runCategoryButton.active = canControl;
     }
 
     private static Component continuousLabel(LabApiClient.Snapshot snapshot) {
@@ -464,42 +482,56 @@ final class LabScreen extends Screen {
     }
 
     private void normalizeCategory(LabApiClient.Snapshot snapshot) {
-        if (category == null) return;
-        if (snapshot.categories().stream().noneMatch(candidate -> candidate.name().equals(category))) category = null;
+        if (category != null && !hasCategory(snapshot)) category = null;
     }
 
+    private boolean hasCategory(LabApiClient.Snapshot snapshot) {
+        return snapshot.categories().stream().anyMatch(candidate -> candidate.name().equals(category));
+    }
+
+    /** "Folder: ALL" covers the moment between a folder vanishing and the next tick dropping it. */
     private String categoryLabel(LabApiClient.Snapshot snapshot) {
         if (category == null) return "All folders  v";
-        for (LabApiClient.Category candidate : snapshot.categories()) {
-            if (candidate.name().equals(category)) {
-                return category + "  v";
-            }
-        }
-        return "Folder: ALL";
+        return hasCategory(snapshot) ? category + "  v" : "Folder: ALL";
     }
 
-    private String runCategoryLabel(LabApiClient.Snapshot snapshot) {
+    private String runCategoryLabel() {
         return category == null ? "Run all" : "Run folder";
     }
 
+    // Geometry. Columns run left to right: MARGIN, sidebar, COLUMN_GAP, panel,
+    // MARGIN. Rows in the panel run: header, filter row, table header, list
+    // rows, then the footer's count and pager along the bottom margin.
     private int sidebarWidth() { return Math.max(140, Math.min(180, width / 4)); }
-    private int panelLeft() { return MARGIN + sidebarWidth() + 10; }
-    private int panelWidth() { return width - panelLeft() - MARGIN; }
+    private int sidebarRight() { return MARGIN + sidebarWidth(); }
+    private int panelLeft() { return sidebarRight() + COLUMN_GAP; }
+    private int panelRight() { return width - MARGIN; }
+    private int panelWidth() { return panelRight() - panelLeft(); }
+    private int panelCenter() { return panelLeft() + panelWidth() / 2; }
     private int filterY() { return HEADER_HEIGHT + GAP; }
     private int tableHeaderY() { return filterY() + 28; }
     private int rowsY() { return tableHeaderY() + 12; }
     private int footerY() { return height - MARGIN - 20; }
+    /** The pager, right-aligned in the footer: "<", the page label, ">". */
+    private int pagerLeft() { return panelRight() - PAGE_BUTTON_WIDTH - PAGE_LABEL_WIDTH - PAGE_BUTTON_WIDTH; }
 
     private int rowCapacity() {
         return Math.max(1, (footerY() - GAP - rowsY()) / ROW_HEIGHT);
     }
 
+    /**
+     * The name column takes what the stats columns leave. Those start at the
+     * name column's right edge: pass rate 105px, record 92px, average 74px,
+     * then recent outcomes; the last shown column is sized to its content.
+     */
     private int scenarioColumnWidth() {
         return panelWidth() - (showRecentForm() ? 360 : showAverage() ? 275 : showRecord() ? 197 : 100);
     }
 
     private int folderCount() { return api.snapshot().categories().size() + 1; }
-    private int folderCapacity() { return Math.max(1, Math.min(10, (height - filterY() - 52) / 20)); }
+    /** Rows that fit under the folder button, leaving room for the hint line below them. */
+    private int folderCapacity() { return Math.max(1, Math.min(10, (height - folderListY() - 30) / FOLDER_ROW_HEIGHT)); }
+    private int folderListY() { return filterY() + 22; }
     private int folderWidth() { return Math.min(Math.max(200, categoryButton.getWidth()), width - 2 * MARGIN); }
     /** The folder list opens under its button, shifted left if it would run off the screen. */
     private int folderX() { return Math.max(MARGIN, Math.min(categoryButton.getX(), width - MARGIN - folderWidth())); }
@@ -512,26 +544,26 @@ final class LabScreen extends Screen {
 
     private void renderFolders(GuiGraphics graphics, int mouseX, int mouseY) {
         int x = folderX();
-        int y = filterY() + 22;
+        int y = folderListY();
         int rows = Math.min(folderCapacity(), folderCount());
         graphics.pose().pushPose();
         graphics.pose().translate(0, 0, 300);
-        graphics.fill(x - 2, y - 2, x + folderWidth() + 2, y + rows * 20 + 18, 0xFF6D839F);
-        graphics.fill(x, y, x + folderWidth(), y + rows * 20 + 16, 0xFF172337);
+        graphics.fill(x - 2, y - 2, x + folderWidth() + 2, y + rows * FOLDER_ROW_HEIGHT + 18, 0xFF6D839F);
+        graphics.fill(x, y, x + folderWidth(), y + rows * FOLDER_ROW_HEIGHT + 16, 0xFF172337);
         for (int row = 0; row < rows; row++) {
             int index = folderOffset + row;
             if (index >= folderCount()) break;
-            int rowY = y + row * 20;
-            boolean hover = mouseX >= x && mouseX < x + folderWidth() && mouseY >= rowY && mouseY < rowY + 20;
-            if (hover || index == folderCursor) graphics.fill(x, rowY, x + folderWidth() - 5, rowY + 20, 0xFF354F70);
+            int rowY = y + row * FOLDER_ROW_HEIGHT;
+            boolean hover = mouseX >= x && mouseX < x + folderWidth() && mouseY >= rowY && mouseY < rowY + FOLDER_ROW_HEIGHT;
+            if (hover || index == folderCursor) graphics.fill(x, rowY, x + folderWidth() - 5, rowY + FOLDER_ROW_HEIGHT, 0xFF354F70);
             graphics.drawString(font, fitWidth(folderName(index), folderWidth() - 14), x + 6, rowY + 6, TEXT, false);
         }
         if (folderCount() > rows) {
-            int thumb = Math.max(10, rows * 20 * rows / folderCount());
-            int offset = (rows * 20 - thumb) * folderOffset / (folderCount() - rows);
+            int thumb = Math.max(10, rows * FOLDER_ROW_HEIGHT * rows / folderCount());
+            int offset = (rows * FOLDER_ROW_HEIGHT - thumb) * folderOffset / (folderCount() - rows);
             graphics.fill(x + folderWidth() - 4, y + offset, x + folderWidth() - 1, y + offset + thumb, MUTED);
         }
-        graphics.drawString(font, "Scroll or use arrow keys / Enter", x + 6, y + rows * 20 + 4, MUTED, false);
+        graphics.drawString(font, "Scroll or use arrow keys / Enter", x + 6, y + rows * FOLDER_ROW_HEIGHT + 4, MUTED, false);
         graphics.pose().popPose();
     }
 
@@ -545,9 +577,9 @@ final class LabScreen extends Screen {
     @Override
     public boolean mouseClicked(double x, double y, int button) {
         if (folderOpen) {
-            int row = (int) ((y - filterY() - 22) / 20);
+            int row = (int) ((y - folderListY()) / FOLDER_ROW_HEIGHT);
             if (x >= folderX() && x < folderX() + folderWidth()
-                    && y >= filterY() + 22 && row < folderCapacity() && folderOffset + row < folderCount()) {
+                    && y >= folderListY() && row < folderCapacity() && folderOffset + row < folderCount()) {
                 chooseFolder(folderOffset + row);
             } else folderOpen = false;
             return true;
@@ -601,10 +633,6 @@ final class LabScreen extends Screen {
         return panelWidth() >= 560;
     }
 
-    private int detailLimit() {
-        return Math.max(20, (panelWidth() - 90) / 6);
-    }
-
     private Component tabLabel(String label, View target) {
         return Component.literal(view == target ? "[ " + label + " ]" : label);
     }
@@ -637,11 +665,6 @@ final class LabScreen extends Screen {
         } catch (RuntimeException error) {
             return "—";
         }
-    }
-
-    private static String compact(String value, int maximumLength) {
-        String text = value == null ? "" : value.replace("\r", " ").replace("\n", " ").trim();
-        return text.length() <= maximumLength ? text : text.substring(0, maximumLength - 3) + "...";
     }
 
     private String fitWidth(String value, int maximumWidth) {

@@ -10,12 +10,14 @@
  * It also implements `SessionObserver`, so it learns about trials by
  * being notified rather than by polling anything.
  *
- * Two constraints shape it: it binds to 127.0.0.1 only, because it can stop
- * runs and must never be reachable off the machine — the one exception is
+ * Two constraints shape it. It binds to 127.0.0.1 only, because it can stop
+ * runs and must never be reachable off the machine. The one exception is
  * Tailscale remote mode, which binds to this machine's tailnet address and lets
- * the tailnet decide who may reach it; and statistics are restored
- * from retained `results.json` files at startup, so restarting the harness does
- * not blank the history an operator was reading.
+ * the tailnet decide who may reach it; only then does the server also serve the
+ * setup page and mod downloads, and learn the watching player from the
+ * `X-Mine-Labs-Player` header. And statistics are restored from retained
+ * `results.json` files at startup, so restarting the harness does not blank the
+ * history an operator was reading.
  */
 
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
@@ -28,6 +30,7 @@ import { SessionController } from "../session/controller.js";
 import type { RunResult } from "../trial/run.js";
 import type { ScenarioInspection } from "../scenario/inspection.js";
 import type { GoalResult } from "../trial/goals.js";
+import { errorCode } from "../util/fs.js";
 import { describeDownloads, setupPage } from "./setup-page.js";
 
 export const DEFAULT_UI_PORT = 25_578;
@@ -213,8 +216,18 @@ export class UiServer implements SessionObserver {
     this.#setStatus(message, "preparing");
   }
 
+  /**
+   * Whether this trial is the one the status line and current inspection follow.
+   *
+   * A managed spectator only ever joins worker 0's world, so the other workers
+   * must not narrate over it. Without a spectator every worker counts.
+   */
+  #isWatched(context: TrialContext): boolean {
+    return !this.#managed || context.workerIndex === 0;
+  }
+
   onTrialRunning(context: TrialContext): void {
-    if (this.#managed && context.workerIndex !== 0) return;
+    if (!this.#isWatched(context)) return;
     const active = this.#activeTrials.get(context.trialId);
     if (active) active.startedAt = new Date().toISOString();
     this.#setStatus(`Running ${context.scenario}`, "running");
@@ -295,7 +308,8 @@ export class UiServer implements SessionObserver {
   }
 
   onTrialStart(context: TrialContext): void {
-    if (!this.#managed || context.workerIndex === 0) this.#current = context.inspection ? { trialId: context.trialId, inspection: context.inspection } : undefined;
+    const watched = this.#isWatched(context);
+    if (watched) this.#current = context.inspection ? { trialId: context.trialId, inspection: context.inspection } : undefined;
     this.#activeTrials.set(context.trialId, {
       trialId: context.trialId,
       workerIndex: context.workerIndex,
@@ -306,7 +320,7 @@ export class UiServer implements SessionObserver {
       scenarioCount: context.scenarioCount,
       startedAt: context.startedAt,
     });
-    if (!this.#managed || context.workerIndex === 0) {
+    if (watched) {
       this.#setStatus(this.#managed ? `Preparing ${context.scenario}` : activeMessage(this.#activeTrials), this.#managed ? "preparing" : "running");
     }
   }
@@ -328,7 +342,7 @@ export class UiServer implements SessionObserver {
     recordStatistics(this.#statisticsWindow, this.#scenarioStats, uiResult, true);
     this.#activeTrials.delete(context.trialId);
     if (this.#phase === "stopping" || this.#phase === "returning") return;
-    if (this.#managed && context.workerIndex !== 0 && this.#phase === "preparing") return;
+    if (!this.#isWatched(context) && this.#phase === "preparing") return;
     if (this.#activeTrials.size > 0) return this.#setStatus(activeMessage(this.#activeTrials), "running");
     const outcome = `${result.scenario}: ${result.outcome}`;
     this.#setStatus(
@@ -374,55 +388,80 @@ export class UiServer implements SessionObserver {
     };
   }
 
+  /**
+   * Answer one request, turning anything a route throws into a 400.
+   *
+   * Every such error is either the caller's (malformed JSON, an invalid
+   * command) or one the operator must fix (a refreshed catalog that fails
+   * validation), and its message says which. A download can fail after its
+   * headers are sent; then no JSON can follow, so the connection is cut rather
+   * than letting a second response throw out of this unawaited handler.
+   */
   async #handle(request: IncomingMessage, response: ServerResponse): Promise<void> {
     try {
-      const url = new URL(request.url ?? "/", "http://127.0.0.1");
       if (this.#remote) this.#identify(request);
-      if (request.method === "GET" && url.pathname === "/api/scenario") {
-        if (url.searchParams.get("current") === "true") {
-          return this.#current ? json(response, 200, { ...this.#current.inspection, progress: this.#current.progress, outcome: this.#current.outcome ?? "in progress", source: "Current run: original configuration" })
-            : json(response, 404, { error: "No current scenario to inspect" });
-        }
-        const inspection = this.#inspections.get(url.searchParams.get("name") ?? "");
-        return inspection ? json(response, 200, { ...inspection, source: "Catalog: last loaded configuration" })
-          : json(response, 404, { error: "Scenario details are unavailable" });
-      }
-      if (request.method === "GET" && request.url === "/api/status") {
-        return json(response, 200, this.snapshot());
-      }
-      if (this.#remote && request.method === "GET" && url.pathname.startsWith("/downloads/")) {
-        const name = decodeURIComponent(url.pathname.slice("/downloads/".length));
-        const download = this.#remote.downloads.find(entry => entry.name === name);
-        return download ? await sendFile(response, download.path, name) : json(response, 404, { error: "not found" });
-      }
+      await this.#route(request, response);
+    } catch (error) {
+      if (response.headersSent) return void response.destroy();
+      json(response, 400, { error: error instanceof Error ? error.message : String(error) });
+    }
+  }
+
+  /** The route table. Routes match on the path alone, so a query string never hides one. */
+  async #route(request: IncomingMessage, response: ServerResponse): Promise<void> {
+    const url = new URL(request.url ?? "/", "http://127.0.0.1");
+    const path = url.pathname;
+    const get = request.method === "GET";
+    if (get && path === "/api/scenario") return this.#inspect(url, response);
+    if (get && path === "/api/status") return json(response, 200, this.snapshot());
+    if (get && this.#remote) {
+      if (path.startsWith("/downloads/")) return await this.#download(this.#remote, path, response);
       // `/setup` always answers with the page, for in-app browsers and link previews that do not ask for HTML.
-      if (this.#remote && request.method === "GET" && (url.pathname === "/setup"
-        || (request.url === "/" && String(request.headers.accept ?? "").includes("text/html")))) {
+      if (path === "/setup" || (path === "/" && String(request.headers.accept ?? "").includes("text/html"))) {
         return html(response, setupPage(this.url, await describeDownloads(this.#remote.downloads)));
       }
-      if (request.method === "GET" && request.url === "/") {
-        return json(response, 200, {
-          service: "mine-labs-ui",
-          status: "/api/status",
-          control: "/api/control",
-          ...(this.#remote ? { setup: "/setup" } : {}),
-        });
-      }
-      if (request.method === "POST" && request.url === "/api/control") {
-        if (!String(request.headers["content-type"] ?? "").startsWith("application/json")) {
-          return json(response, 415, {
-            error: "content-type must be application/json",
-          });
-        }
-        const command = await readControl(request);
-        return await this.#control(command, response);
-      }
-      json(response, 404, { error: "not found" });
-    } catch (error) {
-      json(response, 400, {
-        error: error instanceof Error ? error.message : String(error),
+    }
+    if (get && path === "/") {
+      return json(response, 200, {
+        service: "mine-labs-ui",
+        status: "/api/status",
+        control: "/api/control",
+        ...(this.#remote ? { setup: "/setup" } : {}),
       });
     }
+    if (request.method === "POST" && path === "/api/control") {
+      if (!String(request.headers["content-type"] ?? "").startsWith("application/json")) {
+        return json(response, 415, { error: "content-type must be application/json" });
+      }
+      return await this.#control(await readControl(request), response);
+    }
+    json(response, 404, { error: "not found" });
+  }
+
+  /**
+   * Full scenario details, fetched on demand so the polled snapshot stays small.
+   *
+   * `current=true` answers with the configuration the running trial started
+   * with, which a catalog refresh must not rewrite; `name=` answers from the
+   * catalog as last loaded.
+   */
+  #inspect(url: URL, response: ServerResponse): void {
+    if (url.searchParams.get("current") === "true") {
+      if (!this.#current) return json(response, 404, { error: "No current scenario to inspect" });
+      const { inspection, progress, outcome } = this.#current;
+      return json(response, 200, { ...inspection, progress, outcome: outcome ?? "in progress", source: "Current run: original configuration" });
+    }
+    const inspection = this.#inspections.get(url.searchParams.get("name") ?? "");
+    if (!inspection) return json(response, 404, { error: "Scenario details are unavailable" });
+    json(response, 200, { ...inspection, source: "Catalog: last loaded configuration" });
+  }
+
+  /** Serve only the JARs this lab offered; the published name never reaches the filesystem. */
+  async #download(remote: UiRemoteClient, path: string, response: ServerResponse): Promise<void> {
+    const name = decodeURIComponent(path.slice("/downloads/".length));
+    const download = remote.downloads.find(entry => entry.name === name);
+    if (!download) return json(response, 404, { error: "not found" });
+    await sendFile(response, download.path, name);
   }
 
   /**
@@ -552,7 +591,7 @@ async function loadRetainedResults(rootDir: string): Promise<{
 }> {
   const runsDir = join(rootDir, "runs");
   const directories = await readdir(runsDir, { withFileTypes: true }).catch((error: unknown) => {
-    if (error instanceof Error && "code" in error && error.code === "ENOENT") return [];
+    if (errorCode(error) === "ENOENT") return [];
     throw error;
   });
   const recent: UiResult[] = [];
@@ -701,18 +740,17 @@ async function sendFile(response: ServerResponse, path: string, name: string): P
 }
 
 function html(response: ServerResponse, body: string): void {
-  response.writeHead(200, {
-    "Content-Type": "text/html; charset=utf-8",
-    "Content-Length": Buffer.byteLength(body),
-    "Cache-Control": "no-store",
-  });
-  response.end(body);
+  send(response, 200, "text/html; charset=utf-8", body);
 }
 
 function json(response: ServerResponse, status: number, value: unknown): void {
-  const body = JSON.stringify(value);
+  send(response, status, "application/json; charset=utf-8", JSON.stringify(value));
+}
+
+// Everything here is live state, so nothing may be cached between polls.
+function send(response: ServerResponse, status: number, contentType: string, body: string): void {
   response.writeHead(status, {
-    "Content-Type": "application/json; charset=utf-8",
+    "Content-Type": contentType,
     "Content-Length": Buffer.byteLength(body),
     "Cache-Control": "no-store",
   });

@@ -198,9 +198,8 @@ export async function runScenarioTrial(opts: ScenarioTrialOptions): Promise<RunR
     await measureClients(opts, clients, result, initialGoalState);
   } catch (error) {
     if (opts.signal?.aborted) {
-      const reason = typeof opts.signal.reason === "string" ? opts.signal.reason : "operator request";
       result.outcome = "cancelled";
-      result.goal = { state: "pending", detail: `trial cancelled: ${reason}` };
+      result.goal = cancelledGoal(opts.signal);
       log(result.goal.detail);
     } else {
       result.outcome = "error";
@@ -373,8 +372,7 @@ export async function awaitScenarioGoal(options: {
 
   for (;;) {
     if (options.signal?.aborted) {
-      const reason = typeof options.signal.reason === "string" ? options.signal.reason : "operator request";
-      const goal = { state: "pending", detail: `trial cancelled: ${reason}` } as const;
+      const goal = cancelledGoal(options.signal);
       return { outcome: "cancelled", goal, log: goal.detail };
     }
     if (options.scenario.verification) {
@@ -421,6 +419,12 @@ export async function awaitScenarioGoal(options: {
     }
     await delay(GOAL_POLL_MS);
   }
+}
+
+/** A cancelled trial's goal: never judged, and naming why when the abort gave a reason. */
+function cancelledGoal(signal: AbortSignal): GoalResult {
+  const reason = typeof signal.reason === "string" ? signal.reason : "operator request";
+  return { state: "pending", detail: `trial cancelled: ${reason}` };
 }
 
 async function stopScenarioClients(clients: TrialClientState): Promise<void> {

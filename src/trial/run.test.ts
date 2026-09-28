@@ -7,6 +7,26 @@ import type { ClientCompletion } from "../client/protocol.js";
 import { awaitScenarioGoal, runScenarioTrial } from "./run.js";
 import { scenarioSchema } from "../scenario/schema.js";
 
+type TrialServer = Parameters<typeof runScenarioTrial>[0]["server"];
+
+/**
+ * A stand-in server whose rcon records every command, in order, into
+ * `commands`. `rcon` replaces or adds individual methods.
+ */
+function recordingServer(
+  commands: string[],
+  options: { worldDir?: string; rcon?: Record<string, unknown> } = {},
+): TrialServer {
+  return {
+    worldDir: options.worldDir, host: "127.0.0.1", operatorNames: [], gamePort: 12345,
+    rcon: {
+      command: async (command: string) => { commands.push(command); return ""; },
+      executeChecked: async (command: string) => { commands.push(command); return ""; },
+      ...options.rcon,
+    },
+  } as unknown as TrialServer;
+}
+
 const scenario = scenarioSchema.parse({
   name: "settlement",
   minecraft: { version: "1.21.4" },
@@ -50,9 +70,7 @@ test("a completion reported while the goal is being read still settles the trial
 
   const settlement = await awaitScenarioGoal({
     scenario,
-    server: { rcon: observer } as unknown as Parameters<
-      typeof awaitScenarioGoal
-    >[0]["server"],
+    server: { rcon: observer } as unknown as TrialServer,
     clients: { processes: new Map(), chat: new Map(), completions },
   });
 
@@ -67,16 +85,12 @@ test("a failed snapshot never arranges or tears down an unsaved arena", async ()
     reset: ["fill 0 -60 0 5 -60 5 air"],
     client: { command: "must-not-start" }, goal: { kind: "completion", who: "Builder" },
   });
-  const server = {
-    operatorNames: [],
-    rcon: {
-      command: async (command: string) => { commands.push(command); return ""; },
-      executeChecked: async (command: string) => {
-        commands.push(command);
-        if (command.startsWith("clone ")) throw new Error("snapshot refused");
-      },
+  const server = recordingServer(commands, { rcon: {
+    executeChecked: async (command: string) => {
+      commands.push(command);
+      if (command.startsWith("clone ")) throw new Error("snapshot refused");
     },
-  } as unknown as Parameters<typeof runScenarioTrial>[0]["server"];
+  } });
   const result = await runScenarioTrial({ runDir: "unused-snapshot-failure", scenario: fixture, server, reuseServer: true, log: () => {} });
   assert.equal(result.outcome, "error");
   assert.equal(result.error, "snapshot refused");
@@ -96,13 +110,7 @@ test("a prepared world is frozen before setup and cancellation never launches it
     geometry: [{ setblock: { at: [1, -58, 1], block: "sand" } }],
     tick: ["say started"], client: { command: "must-not-launch" }, goal: { kind: "completion" },
   });
-  const server = {
-    worldDir: join(root, "world"), host: "127.0.0.1", operatorNames: [], gamePort: 12345,
-    rcon: {
-      command: async (command: string) => { commands.push(command); return ""; },
-      executeChecked: async (command: string) => { commands.push(command); return ""; },
-    },
-  } as unknown as Parameters<typeof runScenarioTrial>[0]["server"];
+  const server = recordingServer(commands, { worldDir: join(root, "world") });
   try {
     const trial = runScenarioTrial({ runDir: root, scenario: fixture, server, log: () => {}, signal: cancellation.signal,
       holdPreparedWorld: true, onWorldPrepared: () => { prepared.resolve(); return gate.promise; },
@@ -129,15 +137,10 @@ test("world and client gates precede observer arrival, activation, and thaw", as
     entities: [{ type: "zombie", pos: [0, -60, 0] }],
     client: { command: "bun", args: [resolve("src/client/test-fixtures/protocol-client.mjs")] }, goal: { kind: "completion" },
   });
-  const server = {
-    worldDir: join(root, "world"), host: "127.0.0.1", operatorNames: [], gamePort: 12345,
-    rcon: {
-      command: async (command: string) => { commands.push(command); return ""; },
-      executeChecked: async (command: string) => { commands.push(command); return ""; },
-      playerOnline: async (name: string) => { commands.push(`online ${name}`); return true; },
-      preparePlayerMetrics: async () => {},
-    },
-  } as unknown as Parameters<typeof runScenarioTrial>[0]["server"];
+  const server = recordingServer(commands, { worldDir: join(root, "world"), rcon: {
+    playerOnline: async (name: string) => { commands.push(`online ${name}`); return true; },
+    preparePlayerMetrics: async () => {},
+  } });
   try {
     const result = await runScenarioTrial({ runDir: root, scenario: fixture, server, log: () => {},
       holdPreparedWorld: true, waitForSpectator: true, spectatorUsername: "Observer",

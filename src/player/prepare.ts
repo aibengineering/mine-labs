@@ -16,6 +16,7 @@
 import type { Dimension, PlayerSpec } from "../scenario/schema.js";
 import { posToCommand } from "../scenario/schema.js";
 import { inDimension, resourceId } from "../util/minecraft.js";
+import { delay } from "../util/fs.js";
 
 const MINECRAFT_TAG = /^[A-Za-z0-9_.+-]+$/u;
 const EQUIPMENT_SLOTS = {
@@ -33,6 +34,8 @@ export interface PreparePlayerForTrialOptions {
   /** The arena dimension a declared `pos` is in. A player joins in the overworld. */
   dimension?: Dimension;
   resetReusablePlayer: boolean;
+  /** How to wait between reads of a reused body's fire; tests pass one that does not sleep. */
+  wait?: (ms: number) => Promise<void>;
 }
 
 /**
@@ -57,7 +60,7 @@ export async function preparePlayerForTrial(options: PreparePlayerForTrialOption
   if (options.resetReusablePlayer) {
     // Still a spectator, so the rejoin cell cannot burn or hurt it on the way out.
     if (teleport) await commands.command(teleport);
-    await returnReusablePlayer(commands, player.name);
+    await returnReusablePlayer(commands, player.name, options.wait ?? delay);
     // After the vitals restore, so a reused body is wounded from full health
     // rather than from whatever the last trial left it with.
     await woundToDeclaredHealth(commands, player);
@@ -101,7 +104,11 @@ const RETURN_POLL_MS = 50;
  * health never regenerates on no-regeneration fixtures. Reading `Fire` also
  * waits out a change of dimension, during which the player cannot be found.
  */
-async function returnReusablePlayer(commands: PlayerCommandHost, name: string): Promise<void> {
+async function returnReusablePlayer(
+  commands: PlayerCommandHost,
+  name: string,
+  wait: (ms: number) => Promise<void>,
+): Promise<void> {
   for (let attempt = 1; ; attempt += 1) {
     const answer = await commands.command(`data get entity ${name} Fire`);
     const ticks = /(-?\d+)s\s*$/u.exec(answer.trim())?.[1];
@@ -109,7 +116,7 @@ async function returnReusablePlayer(commands: PlayerCommandHost, name: string): 
     if (attempt >= RETURN_POLL_ATTEMPTS) {
       throw new Error(`${name} could not return to survival after ${RETURN_POLL_ATTEMPTS * RETURN_POLL_MS} ms: ${answer}`);
     }
-    await new Promise((resolve) => setTimeout(resolve, RETURN_POLL_MS));
+    await wait(RETURN_POLL_MS);
   }
   await commands.command(`gamemode survival ${name}`);
   await commands.command(`effect give ${name} minecraft:instant_health 1 9 true`);

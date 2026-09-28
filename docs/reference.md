@@ -361,7 +361,7 @@ Ctrl+C cancels and releases the session's child processes and ports.
 | `mine-labs init` | Create an example YAML and client |
 | `mine-labs list [paths...]` | List runnable entries recursively; defaults to `./scenarios` |
 | `mine-labs verify <paths...> --jobs N` | Specialised shared-location throughput benchmark |
-| `mine-labs doctor` | Show Java from `PATH` and the running Bun version |
+| `mine-labs doctor` | Show the server's Java (`JAVA_HOME`, else `PATH`) against the Java 21 requirement, and the running Bun version |
 | `mine-labs ui build` | Build the client mod for development |
 
 Verification manifests can also be opened or run with `run`; their locations
@@ -376,6 +376,11 @@ stops the session. F10 opens the dashboard from the world or Minecraft menus.
 Search, folder selection, Refresh, scenario inspection, and retained results
 remain available between runs. A stable connection ID identifies a world, so
 the observer reconnects automatically when the next selected server is prepared.
+
+The dashboard polls `GET /api/status` for the session snapshot. Its
+`awaitingStartTrialId`, `currentScenario`, `selectedCategory`, `active`, and
+`connection` fields are `null`, not absent, when nothing is waiting, inspected,
+selected, running, or connected.
 
 ### Tailscale remote mode
 
@@ -394,7 +399,7 @@ In remote mode the control API also serves:
 
 | Path | Purpose |
 | --- | --- |
-| `/` (browser) | Setup page with the lab address and mod download links |
+| `/setup`, or `/` from a browser | Setup page with the lab address, mod downloads, and launcher steps |
 | `/downloads/<file>.jar` | The built Mine Labs mod and the catalog's spectator mods |
 | `clientProperties` in `/api/status` | The catalog's `spectator.systemProperties`, which the mod applies unless the JVM was launched with that property |
 

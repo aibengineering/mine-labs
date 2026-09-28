@@ -106,10 +106,6 @@ final class LabHud {
         return text + "...";
     }
 
-    private static String singleLine(String value) {
-        return value == null ? "" : value.replaceAll("\\s+", " ").trim();
-    }
-
     private record Line(String text, int color) {
     }
 }

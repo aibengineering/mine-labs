@@ -79,6 +79,9 @@ test("non-reused trials leave player state alone", async () => {
 
 class FakePlayerHost implements PlayerCommandHost {
   readonly commands: string[] = [];
+  /** Each poll interval the preparation waited out, recorded instead of slept. */
+  readonly waits: number[] = [];
+  readonly wait = async (ms: number): Promise<void> => { this.waits.push(ms); };
   readonly tags = new Set<string>();
   readonly inventory: string[] = [];
   /** Queued answers to `data get entity <name> Fire`; a settled body answers -20s. */
@@ -136,6 +139,7 @@ test("a reused body is wounded only once it is found at its position, back in su
     player: { name: "Wounded", pos: [192.5, 49, -19.5], inventory: [], op: false, health: 11 },
     dimension: "the_nether",
     resetReusablePlayer: true,
+    wait: host.wait,
   });
   const teleport = host.commands.indexOf("execute in minecraft:the_nether run tp Wounded 192.5 49 -19.5");
   const found = host.commands.lastIndexOf("data get entity Wounded Fire");
@@ -154,13 +158,15 @@ test("a reused body that rejoined burning stays a spectator until its fire is ou
     commands: host,
     player: { name: "Collector", pos: [0, -59, 0], inventory: [], op: false },
     resetReusablePlayer: true,
+    wait: host.wait,
   });
   const reads = host.commands.flatMap((command, index) => command === "data get entity Collector Fire" ? [index] : []);
   assert.equal(reads.length, 3);
+  assert.equal(host.waits.length, 2);
   assert.ok(host.commands.indexOf("gamemode survival Collector") > reads.at(-1)!);
 });
 
-test("a reused body that never stops burning fails preparation instead of starting the trial", { timeout: 10_000 }, async () => {
+test("a reused body that never stops burning fails preparation instead of starting the trial", async () => {
   const host = new FakePlayerHost();
   host.fire.push(...Array.from({ length: 100 }, () => "Collector has the following entity data: 300s"));
   await assert.rejects(
@@ -168,8 +174,12 @@ test("a reused body that never stops burning fails preparation instead of starti
       commands: host,
       player: { name: "Collector", pos: [0, -59, 0], inventory: [], op: false },
       resetReusablePlayer: true,
+      wait: host.wait,
     }),
-    /Collector could not return to survival/u,
+    /Collector could not return to survival after 5000 ms/u,
   );
   assert.ok(!host.commands.includes("gamemode survival Collector"));
+  // A hundred reads, fifty milliseconds apart: five seconds before giving up.
+  assert.equal(host.waits.length, 99);
+  assert.ok(host.waits.every((ms) => ms === 50));
 });

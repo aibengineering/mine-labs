@@ -27,6 +27,7 @@ import { Rcon } from "./rcon.js";
 import { mineLabsHome, writeTextFile, delay } from "../util/fs.js";
 import { reserveFreePortPair, type PortPairLease } from "./ports.js";
 import { linkServerRuntime } from "./runtime.js";
+import { javaExecutable, javaTooOldMessage } from "./java.js";
 import { registerManagedChild, settledWithin, terminateProcessTree, waitForChildExit } from "../process/children.js";
 import { defaultOperatorProfiles, offlinePlayerUuid, type OperatorProfile } from "./operator-policy.js";
 
@@ -100,6 +101,8 @@ export class MinecraftServer {
   rcon?: Rcon;
   private proc?: ChildProcess;
   private spawnFailure?: Error;
+  /** Set when the JVM refused the jar as too new for it; replaces the bare exit code. */
+  private javaTooOld?: string;
 
   constructor(
     private cfg: ServerConfig,
@@ -218,8 +221,7 @@ export class MinecraftServer {
     const root = join(this.cfg.worldDir, "..");
     await mkdir(root, { recursive: true });
     await this.writeConfig();
-    const javaName = process.platform === "win32" ? "javaw.exe" : "java";
-    const java = process.env.JAVA_HOME ? join(process.env.JAVA_HOME, "bin", javaName) : javaName;
+    const java = javaExecutable();
     this.log(`starting ${this.cfg.version} server on ${this.cfg.host}:${this.cfg.gamePort} (rcon :${this.cfg.rconPort})`);
     this.proc = spawn(java, ["-Xms512M", "-Xmx2G", "-jar", this.jar, "nogui"], {
       cwd: root,
@@ -228,7 +230,10 @@ export class MinecraftServer {
     });
     registerManagedChild(this.proc);
     this.proc.stdout?.on("data", (d) => this.log(`[server] ${String(d).trimEnd()}`));
-    this.proc.stderr?.on("data", (d) => this.log(`[server] ${String(d).trimEnd()}`));
+    this.proc.stderr?.on("data", (d) => {
+      this.javaTooOld ??= javaTooOldMessage(String(d), java, this.cfg.version);
+      this.log(`[server] ${String(d).trimEnd()}`);
+    });
     this.proc.once("error", (error) => {
       this.spawnFailure = error;
       this.log(`[server] process error: ${error.message}`);
@@ -243,6 +248,7 @@ export class MinecraftServer {
       signal?.throwIfAborted();
       if (this.spawnFailure) throw this.spawnFailure;
       if (this.proc && this.proc.exitCode !== null) {
+        if (this.javaTooOld) throw new Error(this.javaTooOld);
         throw new Error(`server exited with code ${this.proc.exitCode} before becoming ready`);
       }
       try {
@@ -297,6 +303,7 @@ export class MinecraftServer {
       }
       this.proc = undefined;
       this.spawnFailure = undefined;
+      this.javaTooOld = undefined;
     } finally {
       this.ports.release();
     }

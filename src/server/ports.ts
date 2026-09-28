@@ -21,16 +21,10 @@ export interface PortPairLease {
   release(): void;
 }
 
-// A connect probe cannot reserve a port for the later Java process. This set
-// closes the important race inside one Mine Labs process: parallel workers can
-// no longer observe and select the same free game/RCON pair.
+/** Every port leased in this process; see the module comment for why this is the reservation. */
 const leasedPorts = new Set<number>();
 
-/**
- * A port is busy if something accepts connections on it. We probe by
- * connecting rather than binding: Node sets SO_REUSEADDR on Windows, which
- * makes a bind-probe succeed against a port that is actively listening.
- */
+/** Free means nothing accepts a connection there (a connect probe, per the module comment). */
 function isFree(port: number, host: string): Promise<boolean> {
   const { promise, resolve } = Promise.withResolvers<boolean>();
   const client = net.connect({ port, host });

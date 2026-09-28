@@ -1,9 +1,14 @@
-/** Launch the package's own NeoForge client, with writable build/game files outside node_modules. */
-import { spawn } from "node:child_process";
-import { cp, mkdir, open, readdir, rm, writeFile } from "node:fs/promises";
+/**
+ * Launch the package's own NeoForge client, or build its mod for a client Mine
+ * Labs does not launch, with writable build/game files outside node_modules.
+ */
+import { spawn, type ChildProcess } from "node:child_process";
+import { cp, mkdir, open, rm, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { registerManagedChild, terminateProcessTree, waitForChildExit } from "../process/children.js";
+import { errorCode } from "../util/fs.js";
+import { findModJar } from "./build.js";
 import { lockClientRuntime } from "./runtime-lock.js";
 import { installSpectatorMods, type SpectatorSetup } from "./spectator-mods.js";
 
@@ -20,6 +25,25 @@ async function refreshClientSources(runtime: string): Promise<void> {
   }
   for (const file of ["build.gradle", "settings.gradle", "gradle.properties"]) {
     await cp(join(source, file), join(runtime, file));
+  }
+}
+
+/**
+ * Run a Gradle task in the writable client runtime, with all output in `logPath`.
+ *
+ * The child keeps its own copy of the log descriptor, so ours is closed as soon
+ * as it has started. Registering the child lets an interrupted harness reap it.
+ */
+async function spawnGradle(runtime: string, task: string, logPath: string, env?: NodeJS.ProcessEnv): Promise<ChildProcess> {
+  const logFile = await open(logPath, "w");
+  try {
+    const child = spawn(javaCommand(), ["-jar", join(runtime, "gradle/wrapper/gradle-wrapper.jar"), task, "--no-daemon", "--console=plain"], {
+      cwd: runtime, windowsHide: true, shell: false, stdio: ["ignore", logFile.fd, logFile.fd], env,
+    });
+    registerManagedChild(child);
+    return child;
+  } finally {
+    await logFile.close();
   }
 }
 
@@ -44,24 +68,15 @@ export async function buildRemoteClientMod(options: { rootDir: string; log: (mes
     await rm(libs, { recursive: true, force: true });
     const logPath = join(runtime, "build-mod.log");
     options.log(`building the Mine Labs mod for remote clients; first build downloads NeoForge (log: ${logPath})`);
-    const logFile = await open(logPath, "w");
-    let child;
-    try {
-      child = spawn(javaCommand(), ["-jar", join(runtime, "gradle/wrapper/gradle-wrapper.jar"), "jar", "--no-daemon", "--console=plain"], {
-        cwd: runtime, windowsHide: true, shell: false, stdio: ["ignore", logFile.fd, logFile.fd],
-      });
-      registerManagedChild(child);
-    } finally {
-      await logFile.close();
-    }
+    const child = await spawnGradle(runtime, "jar", logPath);
     await new Promise<void>((resolvePromise, reject) => {
       child.once("error", reject);
       child.once("close", (code, signal) => code === 0 ? resolvePromise()
         : reject(new Error(`Mine Labs mod build exited ${code ?? signal}; see ${logPath}`)));
     });
-    const jar = (await readdir(libs)).filter(name => /^mine-labs-ui-.*\.jar$/u.test(name) && !name.includes("sources")).sort().at(-1);
+    const jar = await findModJar(libs);
     if (!jar) throw new Error(`Mine Labs mod build produced no mine-labs-ui-*.jar; see ${logPath}`);
-    return join(libs, jar);
+    return jar;
   } finally {
     await unlock();
   }
@@ -80,30 +95,22 @@ export async function launchSpectatorClient(options: {
     await mkdir(join(runtime, "run"), { recursive: true });
     await installSpectatorMods(join(runtime, "run", "mods"), options.setup);
     await writeFile(join(runtime, "spectator-properties.json"), JSON.stringify(options.setup.systemProperties));
+    // Written once only: an operator's own settings in an existing options.txt win.
     await writeFile(join(runtime, "run", "options.txt"), "onboardAccessibility:false\nguiScale:2\ntutorialStep:none\n", { flag: "wx" })
-      .catch((error: unknown) => { if (!(error instanceof Error && "code" in error && error.code === "EEXIST")) throw error; });
-    const logFile = await open(join(runtime, "launcher.log"), "w");
-    const java = javaCommand();
-    options.log(`opening Mine Labs Minecraft client; first launch downloads NeoForge (log: ${join(runtime, "launcher.log")})`);
-    let child;
-    try {
-      child = spawn(java, ["-jar", join(runtime, "gradle/wrapper/gradle-wrapper.jar"), "runClient", "--no-daemon", "--console=plain"], {
-        cwd: runtime, windowsHide: true, shell: false,
-        stdio: ["ignore", logFile.fd, logFile.fd],
-        env: { ...process.env, MINE_LABS_UI_URL: `http://127.0.0.1:${options.uiPort}`, MINE_LABS_USERNAME: SPECTATOR_USERNAME },
-      });
-      registerManagedChild(child);
-    } finally {
-      await logFile.close();
-    }
+      .catch((error: unknown) => { if (errorCode(error) !== "EEXIST") throw error; });
+    const logPath = join(runtime, "launcher.log");
+    options.log(`opening Mine Labs Minecraft client; first launch downloads NeoForge (log: ${logPath})`);
+    const child = await spawnGradle(runtime, "runClient", logPath,
+      { ...process.env, MINE_LABS_UI_URL: `http://127.0.0.1:${options.uiPort}`, MINE_LABS_USERNAME: SPECTATOR_USERNAME });
+    // Set by `stop`, so the exit it causes is not reported as a client failure.
+    let stopping = false;
     const processClosed = new Promise<void>((resolvePromise, reject) => {
       child.once("error", reject);
       child.once("close", (code, signal) => {
         if (code === 0 || stopping) resolvePromise();
-        else reject(new Error(`Mine Labs client exited ${code ?? signal}; see ${join(runtime, "launcher.log")}`));
+        else reject(new Error(`Mine Labs client exited ${code ?? signal}; see ${logPath}`));
       });
     });
-    let stopping = false;
     const closed = processClosed.finally(unlock);
     // The caller may still be setting up its session when the launcher fails.
     void closed.catch(() => undefined);

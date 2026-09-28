@@ -55,8 +55,11 @@ Choose **beacon-walk** or **zombie-hunt** in the dashboard to run an example.
 
 For either setup, the first launch downloads the server and Gradle/NeoForge
 dependencies and can take several minutes; later launches reuse the cache.
-`doctor` reports Java from `PATH` and the running Bun version; it does not enforce
-the versions above, check Node.js, or act as a pass/fail readiness check.
+`doctor` reports the Java the server will run under (`$JAVA_HOME/bin/java`, else
+`java` on `PATH`) against the Java 21 requirement, and the running Bun version; it
+does not check Node.js or act as a pass/fail readiness check. If the server's Java
+is too old, the run fails with a message naming the Java it needs and pointing at
+`JAVA_HOME`.
 
 You must own Minecraft: Java Edition to use the managed client and agree to the
 [Minecraft EULA](https://www.minecraft.net/en-us/eula). Mine Labs writes
@@ -152,10 +155,10 @@ on the device. It opens no client here. It serves the dashboard and every scenar
 world on this machine's tailnet address only, and has no login of its own, so
 anyone who can reach that address on your tailnet can run and stop scenarios.
 
-Mine Labs prints the lab address, such as `http://100.101.102.103:25578`. On the
-device:
+Mine Labs prints the lab address, such as `http://100.101.102.103:25578`, and its
+setup page, the same address followed by `/setup`. On the device:
 
-1. Open that address in a browser and download the mods it lists.
+1. Open the setup page in a browser and download the mods it lists.
 2. Add them to a NeoForge 1.21.4 instance in your launcher.
 3. Start Minecraft, choose **Mine Labs** on the title screen, and enter the address.
 

@@ -6,24 +6,26 @@ import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import java.net.URI;
 import java.net.URLEncoder;
-import java.util.concurrent.CompletableFuture;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Properties;
-import java.util.HashMap;
+import java.util.concurrent.CompletableFuture;
 import net.minecraft.client.Minecraft;
 
 final class LabApiClient {
-    private static final String DEFAULT_URL = "http://127.0.0.1:25578";
+    private static final String DEFAULT_URL = "http://127.0.0.1:" + LabConfig.DEFAULT_PORT;
     private static final long POLL_INTERVAL_MS = 500;
     private static final long FAILURE_GRACE_MS = 2_000;
     private static final int MAX_RESPONSE_CHARS = 1_000_000;
+    /** Minecraft's username rule, for names sent to and received from the lab. */
+    private static final String PLAYER_NAME = "[A-Za-z0-9_]{1,16}";
     /** Properties the JVM was launched with, captured before any lab-supplied value is applied. */
     private static final Properties LAUNCH_PROPERTIES = (Properties) System.getProperties().clone();
 
@@ -41,7 +43,7 @@ final class LabApiClient {
     private long controlGeneration;
 
     private static String initialUrl() {
-        if (LabConfig.launchedWithUrl()) return trimSlash(System.getProperty("minelabs.uiUrl"));
+        if (LabConfig.launchedWithUrl()) return trimSlash(System.getProperty(LabConfig.URL_PROPERTY));
         String saved = LabConfig.savedUrl();
         return saved.isEmpty() ? DEFAULT_URL : saved;
     }
@@ -64,7 +66,7 @@ final class LabApiClient {
     private HttpRequest.Builder request(String path) {
         HttpRequest.Builder builder = HttpRequest.newBuilder(URI.create(baseUrl + path));
         String player = Minecraft.getInstance().getUser().getName();
-        if (player != null && player.matches("[A-Za-z0-9_]{1,16}")) builder.header("X-Mine-Labs-Player", player);
+        if (player != null && player.matches(PLAYER_NAME)) builder.header("X-Mine-Labs-Player", player);
         return builder;
     }
 
@@ -110,17 +112,11 @@ final class LabApiClient {
     }
 
     synchronized void setContinuous(boolean enabled) {
-        JsonObject body = new JsonObject();
-        body.addProperty("action", "continuous");
-        body.addProperty("enabled", enabled);
-        sendControl(body);
+        sendToggle("continuous", enabled);
     }
 
     synchronized void setAutoStart(boolean enabled) {
-        JsonObject body = new JsonObject();
-        body.addProperty("action", "auto-start");
-        body.addProperty("enabled", enabled);
-        sendControl(body);
+        sendToggle("auto-start", enabled);
     }
 
     synchronized void startScenario() {
@@ -132,10 +128,7 @@ final class LabApiClient {
     }
 
     synchronized void setSingleScenario(boolean enabled) {
-        JsonObject body = new JsonObject();
-        body.addProperty("action", "single");
-        body.addProperty("enabled", enabled);
-        sendControl(body);
+        sendToggle("single", enabled);
     }
 
     synchronized void selectCategory(String category) {
@@ -152,12 +145,20 @@ final class LabApiClient {
         sendControl(body);
     }
 
+    private void sendToggle(String action, boolean enabled) {
+        JsonObject body = new JsonObject();
+        body.addProperty("action", action);
+        body.addProperty("enabled", enabled);
+        sendControl(body);
+    }
+
     private void sendControl(JsonObject body) {
         if (pendingAction != null) return;
+        String action = body.get("action").getAsString();
         controlGeneration++;
-        pendingAction = body.get("action").getAsString();
+        pendingAction = action;
         controlFailed = false;
-        notice = pendingAction.equals("refresh") ? "Refreshing scenario files..." : "";
+        notice = action.equals("refresh") ? "Refreshing scenario files..." : "";
         HttpRequest request = request("/api/control")
                 .timeout(Duration.ofSeconds(30))
                 .header("Content-Type", "application/json")
@@ -169,7 +170,7 @@ final class LabApiClient {
                         JsonObject result = JsonParser.parseString(response.body()).getAsJsonObject();
                         throw new IllegalStateException(string(result, "error", "Request rejected"));
                     }
-                    if (body.get("action").getAsString().equals("refresh")) notice = "Catalog refreshed. Next run uses the latest YAML.";
+                    if (action.equals("refresh")) notice = "Catalog refreshed. Next run uses the latest YAML.";
                     // Read status after acceptance so an older poll cannot erase
                     // the immediate click feedback or briefly show the old run.
                     return client.sendAsync(request("/api/status")
@@ -219,116 +220,117 @@ final class LabApiClient {
     private Snapshot parse(String body) {
         JsonObject root = JsonParser.parseString(body).getAsJsonObject();
         applyClientProperties(object(root, "clientProperties"));
-        List<String> scenarios = new ArrayList<>();
-        JsonArray scenarioValues = array(root, "scenarios");
-        if (scenarioValues != null) {
-            for (JsonElement value : scenarioValues) {
-                if (value.isJsonPrimitive()) scenarios.add(value.getAsString());
-            }
-        }
-        Map<String, List<String>> scenarioTags = new HashMap<>();
-        JsonObject tags = object(root, "scenarioTags");
-        if (tags != null) for (var entry : tags.entrySet()) {
-            List<String> labels = new ArrayList<>();
-            for (JsonElement label : entry.getValue().getAsJsonArray()) labels.add(label.getAsString());
-            scenarioTags.put(entry.getKey(), List.copyOf(labels));
-        }
-        List<Category> categories = new ArrayList<>();
-        JsonArray categoryValues = array(root, "categories");
-        if (categoryValues != null) {
-            for (JsonElement value : categoryValues) {
-                if (!value.isJsonObject()) continue;
-                JsonObject category = value.getAsJsonObject();
-                List<String> names = new ArrayList<>();
-                JsonArray nameValues = array(category, "scenarios");
-                if (nameValues != null) {
-                    for (JsonElement name : nameValues) {
-                        if (name.isJsonPrimitive()) names.add(name.getAsString());
-                    }
-                }
-                categories.add(new Category(string(category, "name", "other"), List.copyOf(names)));
-            }
-        }
-        Active active = null;
-        JsonObject activeValue = object(root, "active");
-        if (activeValue != null) {
-            active = new Active(
-                    string(activeValue, "scenario", "scenario"),
-                    integer(activeValue, "cycle", 1),
-                    integer(activeValue, "scenarioIndex", 0),
-                    integer(activeValue, "scenarioCount", scenarios.size()),
-                    string(activeValue, "startedAt", ""),
-                    string(activeValue, "goalText", ""));
-        }
-        JsonObject totalsValue = object(root, "totals");
-        Totals totals = new Totals(
-                integer(totalsValue, "runs", 0),
-                integer(totalsValue, "passed", 0),
-                integer(totalsValue, "failed", 0),
-                integer(totalsValue, "cancelled", 0));
-        List<ScenarioStats> scenarioStats = new ArrayList<>();
-        JsonArray scenarioStatValues = array(root, "scenarioStats");
-        if (scenarioStatValues != null) {
-            for (JsonElement value : scenarioStatValues) {
-                if (!value.isJsonObject()) continue;
-                JsonObject stats = value.getAsJsonObject();
-                List<String> recentOutcomes = new ArrayList<>();
-                JsonArray outcomes = array(stats, "recentOutcomes");
-                if (outcomes != null) {
-                    for (JsonElement outcome : outcomes) {
-                        if (outcome.isJsonPrimitive() && recentOutcomes.size() < 5) {
-                            recentOutcomes.add(outcome.getAsString());
-                        }
-                    }
-                }
-                scenarioStats.add(new ScenarioStats(
-                        string(stats, "scenario", "scenario"),
-                        integer(stats, "runs", 0),
-                        integer(stats, "passed", 0),
-                        integer(stats, "failed", 0),
-                        integer(stats, "cancelled", 0),
-                        integer(stats, "averageElapsedMs", 0),
-                        List.copyOf(recentOutcomes)));
-            }
-        }
-        List<Result> recent = new ArrayList<>();
-        JsonArray recentValues = array(root, "recent");
-        if (recentValues != null) {
-            for (JsonElement value : recentValues) {
-                if (!value.isJsonObject() || recent.size() == 20) continue;
-                JsonObject result = value.getAsJsonObject();
-                recent.add(new Result(
-                        string(result, "scenario", "scenario"),
-                        string(result, "outcome", "unknown"),
-                        integer(result, "elapsedMs", 0),
-                        string(result, "detail", ""),
-                        string(result, "finishedAt", "")));
-            }
-        }
-        JsonObject connectionValue = object(root, "connection");
-        Connection connection = connectionValue == null ? null : new Connection(
-                string(connectionValue, "id", ""),
-                string(connectionValue, "host", ""), integer(connectionValue, "port", 0), string(connectionValue, "focusPlayer", ""));
-        // Only join a world on the lab's own machine: its loopback, or the address this client reached it on.
-        if (connection != null && (!(connection.host().equals("127.0.0.1") || connection.host().equals(URI.create(baseUrl).getHost()))
-                || connection.port() < 1 || connection.port() > 65535 || connection.id().isBlank()
-                || (!connection.focusPlayer().isBlank() && !connection.focusPlayer().matches("[A-Za-z0-9_]{1,16}")))) {
-            throw new IllegalArgumentException("invalid Mine Labs connection target");
-        }
+        List<String> scenarios = strings(root, "scenarios");
+        JsonArray activeTrials = array(root, "activeTrials");
         return new Snapshot(
                 true,
                 string(root, "phase", "waiting"),
                 string(root, "message", "Mine Labs is ready"),
                 bool(root, "continuousEnabled", true),
-                bool(root, "autoStartEnabled", true), string(root, "awaitingStartTrialId", ""),
+                bool(root, "autoStartEnabled", true),
+                string(root, "awaitingStartTrialId", ""),
                 bool(root, "singleScenarioEnabled", false),
                 string(root, "selectedCategory", null),
-                List.copyOf(scenarios), Map.copyOf(scenarioTags),
-                List.copyOf(categories),
-                active,
-                totals,
-                List.copyOf(scenarioStats),
-                List.copyOf(recent), connection, string(root, "currentScenario", ""), integer(root, "jobs", 1), integer(root, "maxJobs", 1), array(root, "activeTrials") == null ? 0 : array(root, "activeTrials").size());
+                scenarios,
+                parseScenarioTags(object(root, "scenarioTags")),
+                parseCategories(array(root, "categories")),
+                parseActive(object(root, "active"), scenarios.size()),
+                parseTotals(object(root, "totals")),
+                parseScenarioStats(array(root, "scenarioStats")),
+                parseRecent(array(root, "recent")),
+                parseConnection(object(root, "connection")),
+                string(root, "currentScenario", ""),
+                integer(root, "jobs", 1),
+                integer(root, "maxJobs", 1),
+                activeTrials == null ? 0 : activeTrials.size());
+    }
+
+    private static Map<String, List<String>> parseScenarioTags(JsonObject tags) {
+        Map<String, List<String>> scenarioTags = new HashMap<>();
+        if (tags != null) for (var entry : tags.entrySet()) {
+            List<String> labels = new ArrayList<>();
+            for (JsonElement label : entry.getValue().getAsJsonArray()) labels.add(label.getAsString());
+            scenarioTags.put(entry.getKey(), List.copyOf(labels));
+        }
+        return Map.copyOf(scenarioTags);
+    }
+
+    private static List<Category> parseCategories(JsonArray values) {
+        List<Category> categories = new ArrayList<>();
+        for (JsonObject category : objects(values)) {
+            categories.add(new Category(string(category, "name", "other"), strings(category, "scenarios")));
+        }
+        return List.copyOf(categories);
+    }
+
+    private static Active parseActive(JsonObject active, int scenarioCount) {
+        if (active == null) return null;
+        return new Active(
+                string(active, "scenario", "scenario"),
+                integer(active, "cycle", 1),
+                integer(active, "scenarioIndex", 0),
+                integer(active, "scenarioCount", scenarioCount),
+                string(active, "startedAt", ""),
+                string(active, "goalText", ""));
+    }
+
+    private static Totals parseTotals(JsonObject totals) {
+        return new Totals(
+                integer(totals, "runs", 0),
+                integer(totals, "passed", 0),
+                integer(totals, "failed", 0),
+                integer(totals, "cancelled", 0));
+    }
+
+    private static List<ScenarioStats> parseScenarioStats(JsonArray values) {
+        List<ScenarioStats> scenarioStats = new ArrayList<>();
+        for (JsonObject stats : objects(values)) {
+            // The dashboard draws the latest five outcomes.
+            List<String> outcomes = strings(stats, "recentOutcomes");
+            scenarioStats.add(new ScenarioStats(
+                    string(stats, "scenario", "scenario"),
+                    integer(stats, "runs", 0),
+                    integer(stats, "passed", 0),
+                    integer(stats, "failed", 0),
+                    integer(stats, "cancelled", 0),
+                    integer(stats, "averageElapsedMs", 0),
+                    outcomes.subList(0, Math.min(5, outcomes.size()))));
+        }
+        return List.copyOf(scenarioStats);
+    }
+
+    private static List<Result> parseRecent(JsonArray values) {
+        List<Result> recent = new ArrayList<>();
+        for (JsonObject result : objects(values)) {
+            if (recent.size() == 20) break;
+            recent.add(new Result(
+                    string(result, "scenario", "scenario"),
+                    string(result, "outcome", "unknown"),
+                    integer(result, "elapsedMs", 0),
+                    string(result, "detail", ""),
+                    string(result, "finishedAt", "")));
+        }
+        return List.copyOf(recent);
+    }
+
+    /**
+     * The world this client should join, or null when there is none. Only a
+     * world on the lab's own machine is accepted: its loopback, or the address
+     * this client reached it on. Anything else rejects the whole status.
+     */
+    private Connection parseConnection(JsonObject value) {
+        if (value == null) return null;
+        Connection connection = new Connection(
+                string(value, "id", ""),
+                string(value, "host", ""),
+                integer(value, "port", 0),
+                string(value, "focusPlayer", ""));
+        boolean labHost = connection.host().equals("127.0.0.1") || connection.host().equals(URI.create(baseUrl).getHost());
+        if (!labHost || connection.port() < 1 || connection.port() > 65535 || connection.id().isBlank()
+                || (!connection.focusPlayer().isBlank() && !connection.focusPlayer().matches(PLAYER_NAME))) {
+            throw new IllegalArgumentException("invalid Mine Labs connection target");
+        }
+        return connection;
     }
 
     /**
@@ -357,6 +359,25 @@ final class LabApiClient {
     private static JsonArray array(JsonObject parent, String name) {
         if (parent == null || !parent.has(name) || !parent.get(name).isJsonArray()) return null;
         return parent.getAsJsonArray(name);
+    }
+
+    /** The array's objects; other elements are skipped. */
+    private static List<JsonObject> objects(JsonArray values) {
+        List<JsonObject> objects = new ArrayList<>();
+        if (values != null) for (JsonElement value : values) {
+            if (value.isJsonObject()) objects.add(value.getAsJsonObject());
+        }
+        return objects;
+    }
+
+    /** The named array's primitive values as strings; other elements are skipped. */
+    private static List<String> strings(JsonObject parent, String name) {
+        List<String> strings = new ArrayList<>();
+        JsonArray values = array(parent, name);
+        if (values != null) for (JsonElement value : values) {
+            if (value.isJsonPrimitive()) strings.add(value.getAsString());
+        }
+        return List.copyOf(strings);
     }
 
     private static String string(JsonObject value, String name, String fallback) {

@@ -25,11 +25,16 @@ export async function buildClientMod(log: (message: string) => void = console.lo
       else reject(new Error(`client mod build exited ${code ?? signal ?? "unknown"}`));
     });
   });
-  const libs = join(modRoot, "build", "libs");
-  const jars = (await readdir(libs))
-    .filter(name => name.startsWith("mine-labs-ui-") && name.endsWith(".jar") && !name.includes("sources"))
-    .sort();
-  const jar = jars.at(-1);
+  const jar = await findModJar(join(modRoot, "build", "libs"));
   if (!jar) throw new Error("client mod build produced no mine-labs-ui-*.jar");
-  return { modRoot, jar: join(libs, jar) };
+  return { modRoot, jar };
+}
+
+/** The installable mod JAR in a Gradle `build/libs`, skipping the sources JAR; the last by name wins. */
+export async function findModJar(libs: string): Promise<string | undefined> {
+  const jar = (await readdir(libs))
+    .filter(name => name.startsWith("mine-labs-ui-") && name.endsWith(".jar") && !name.includes("sources"))
+    .sort()
+    .at(-1);
+  return jar === undefined ? undefined : join(libs, jar);
 }

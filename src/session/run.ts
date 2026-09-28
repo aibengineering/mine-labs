@@ -1,3 +1,17 @@
+/**
+ * Run a session: cycle a catalog of scenarios through one or more workers
+ * until the requested bound, a stop, or an abort.
+ *
+ * The layers split by what each one owns. This module owns the schedule -
+ * `TrialScheduler` is the single place a trial slot is claimed, so parallel
+ * workers never run the same slot - plus settlement: counting outcomes,
+ * reporting them, and pruning old run directories. `worker.ts` owns one
+ * server and decides per trial whether its world can be reset or must be
+ * replaced. `client-worker.ts` wraps worker 0 when a spectator is watching,
+ * preparing the next scenario's world while the current one runs. Each trial
+ * itself is `trial/run.ts`.
+ */
+
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
@@ -10,6 +24,7 @@ import { slugify } from "../util/text.js";
 import { SessionController } from "./controller.js";
 import { createSessionWorker } from "./worker.js";
 import { createClientSessionWorker } from "./client-worker.js";
+import { sessionScenarioName } from "./scenario-name.js";
 import { inspectScenario, type ScenarioInspection } from "../scenario/inspection.js";
 import type { GoalResult } from "../trial/goals.js";
 
@@ -115,10 +130,10 @@ export async function runSession(options: SessionOptions): Promise<SessionSummar
     cancelled: 0,
   };
   await options.observer?.onSessionStart?.({
-    scenarios: options.scenarios.map(({ scenario, category, id }) => ({
-      name: id ?? scenario.name ?? "scenario",
-      category: category ?? "other",
-      inspection: inspectScenario(id ?? scenario.name ?? "scenario", scenario),
+    scenarios: options.scenarios.map((entry) => ({
+      name: sessionScenarioName(entry),
+      category: entry.category ?? "other",
+      inspection: inspectScenario(sessionScenarioName(entry), entry.scenario),
     })),
     spectator: options.spectator,
     jobs,
@@ -173,9 +188,7 @@ export class TrialScheduler {
     const controller = this.options.controller;
     const pending = controller?.pendingSchedule;
     if (pending?.menu) return undefined;
-    const schedule = controller?.selectedCategory
-      ? this.options.scenarios.filter(entry => (entry.category ?? "other") === controller.selectedCategory)
-      : this.options.scenarios;
+    const schedule = this.#schedule();
     if (!schedule.length) return undefined;
     if (controller && !controller.canRepeat && !pending?.requested && !pending?.changed && !pending?.batch) return undefined;
     const repeat = controller?.canRepeat && controller.singleScenarioEnabled && !pending?.changed
@@ -186,6 +199,14 @@ export class TrialScheduler {
       if (requested) return requested;
     }
     return schedule[pending?.changed || this.#scenarioIndex >= schedule.length ? 0 : this.#scenarioIndex];
+  }
+
+  /** The scenarios the cursor walks: the operator's selected category, or the whole catalog. */
+  #schedule(): SessionScenario[] {
+    const category = this.options.controller?.selectedCategory;
+    return category
+      ? this.options.scenarios.filter((entry) => (entry.category ?? "other") === category)
+      : this.options.scenarios;
   }
 
   claim(workerIndex: number): TrialClaim {
@@ -202,11 +223,10 @@ export class TrialScheduler {
     const requested = this.options.controller?.takeRequestedScenario() ??
       (this.options.controller?.canRepeat && this.options.controller.singleScenarioEnabled
         ? this.#lastClaimed.get(workerIndex) : undefined);
-    const selectedCategory = this.options.controller?.selectedCategory;
-    const schedule = selectedCategory
-      ? this.options.scenarios.filter((entry) => (entry.category ?? "other") === selectedCategory)
-      : this.options.scenarios;
-    if (schedule.length === 0) throw new Error(`no scenarios found in category '${selectedCategory}'`);
+    const schedule = this.#schedule();
+    if (schedule.length === 0) {
+      throw new Error(`no scenarios found in category '${this.options.controller?.selectedCategory}'`);
+    }
     if (scheduleChanged) this.options.controller?.queueBatch(schedule.length);
     const batch = this.options.controller?.takeBatchPermit();
     if (this.options.controller && !this.options.controller.canRepeat && !requested && !batch) return { kind: "wait" };
@@ -232,9 +252,9 @@ export class TrialScheduler {
       cycle,
       scenarioIndex,
       scenarioCount: oneOff ? 1 : schedule.length,
-      scenario: entry.id ?? entry.scenario.name ?? "scenario",
+      scenario: sessionScenarioName(entry),
       goalText: describeGoal(entry.scenario.goal),
-      inspection: inspectScenario(entry.id ?? entry.scenario.name ?? "scenario", entry.scenario),
+      inspection: inspectScenario(sessionScenarioName(entry), entry.scenario),
       runDir: runDirectory(this.options.rootDir, { cycle, sequence, workerIndex, scenario: entry.scenario }),
       startedAt: new Date().toISOString(),
     };

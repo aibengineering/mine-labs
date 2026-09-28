@@ -1,4 +1,3 @@
-import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { Command } from "commander";
@@ -8,6 +7,7 @@ import { runSession } from "./session/run.js";
 import { runVerification } from "./session/verification.js";
 import { SessionController } from "./session/controller.js";
 import { reapManagedChildren } from "./process/children.js";
+import { javaExecutable, readJavaVersion, REQUIRED_JAVA_MAJOR } from "./server/java.js";
 import { buildClientMod } from "./ui/build.js";
 import { formatDuration } from "./util/text.js";
 import { writeTextFile } from "./util/fs.js";
@@ -69,7 +69,7 @@ export async function main(argv: string[]): Promise<void> {
     .option("--isolated", "always create fresh worlds instead of using safe resets")
     .option("-p, --port <port>", "preferred server port", portNumber)
     .option("-o, --out <dir>", "session evidence root", ".mine-labs")
-    .option("--ui-port <port>", "client control API port (default: automatic)", portNumber)
+    .option("--ui-port <port>", "client control API port (default: automatic, or 25578 with --tailscale)", portNumber)
     .option("--keep-runs <n>", "number of trial results to retain", nonnegativeInteger, 100)
     .action(async (files: string[], opts, command: Command) => {
       const controller = new SessionController();
@@ -156,11 +156,16 @@ export async function main(argv: string[]): Promise<void> {
 
   program
     .command("doctor")
-    .description("show the detected Java and Bun versions")
+    .description("check the server's Java against Minecraft's requirement and show the Bun version")
     .action(() => {
-      const java = spawnSync("java", ["-version"], { encoding: "utf8" });
-      const ver = java.status === 0 ? (java.stderr + java.stdout).match(/version "([^"]+)"/)?.[1] : undefined;
-      console.log(ver ? pc.green(`✓ java ${ver}`) : pc.red("✗ could not read the Java version from PATH"));
+      // The same java the server is launched with, so JAVA_HOME counts here too.
+      const java = javaExecutable();
+      const detected = readJavaVersion(java);
+      const need = `Minecraft 1.21.4 needs Java ${REQUIRED_JAVA_MAJOR}+`;
+      const fix = `install Java ${REQUIRED_JAVA_MAJOR} and set JAVA_HOME to it, or put it first on PATH`;
+      if (!detected) console.log(pc.red(`✗ could not run ${java} -version; ${need}: ${fix}`));
+      else if (detected.major < REQUIRED_JAVA_MAJOR) console.log(pc.red(`✗ java ${detected.version} (${java}); ${need}: ${fix}`));
+      else console.log(pc.green(`✓ java ${detected.version} (${java}); ${need}`));
       const bunVersion = process.versions.bun;
       console.log(bunVersion ? pc.green(`✓ bun ${bunVersion}`) : pc.red("✗ Mine Labs is not running under Bun"));
     });
