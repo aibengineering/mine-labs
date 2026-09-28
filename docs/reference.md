@@ -5,7 +5,7 @@ For the first run, see the [README](../README.md).
 ## Scenario format
 
 ```yaml
-name: zombie-hunt
+name: zombie-hunt       # optional: defaults to the file name without its extension
 description: A single zombie spawns; the client player must kill it.
 
 minecraft:
@@ -90,11 +90,33 @@ client: { command: bun, args: ["../clients/hunter.js"] }
 goal: { kind: kill, target: zombie }
 ```
 
-A template may define any scenario field except `template`. Fields defined in
-the referring scenario override fields from the template. Template paths and
-client paths are both relative to the scenario file. Templates are deliberately
-one level deep and should live outside `scenarios/` so catalogue discovery does
+A template may define any scenario field. Fields defined in the referring
+scenario override fields from the template, and a field is replaced whole:
+a scenario that declares `world` replaces the template's entire `world`,
+gamerules included. Client paths are relative to the scenario file; a
+`template:` path and spectator mod paths are relative to the file that names
+them. Templates should live outside `scenarios/` so catalogue discovery does
 not treat them as runnable trials.
+
+A template may itself name a `template:`, so a variant can build on a shared
+arena without every scenario repeating the difference:
+
+```yaml
+# templates/stone-arena-no-regen.yaml
+template: ./stone-arena.yaml
+world:
+  type: flat
+  gamerules: { doMobSpawning: false, naturalRegeneration: false }
+```
+
+Each level applies the same rule: its fields replace the ones it inherits, and
+the scenario's replace them all. A chain may be at most four templates deep,
+and a chain that leads back to a file already in it is reported as a template
+cycle naming every file in the loop.
+
+A scenario's `name` labels its run directory and logs. Without one — from the
+scenario or any template — it is the scenario's file name without its
+extension — the last segment of its catalogue id.
 
 ### Goal kinds
 

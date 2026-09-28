@@ -4,11 +4,13 @@
  * The work that is not obvious from the name is all about error quality and
  * path resolution. Every failure - unreadable file, malformed YAML, schema
  * violation - is reported as a `ScenarioError` naming the file, the field path,
- * and, when a template was involved, which scenario pulled it in. A scenario
- * author should never have to guess which of two files a message is about.
+ * and, when a template was involved, which scenario or template pulled it in.
+ * A scenario author should never have to guess which of two files a message is
+ * about.
  *
  * Templates let a suite share defaults: the template supplies fields it names,
- * the scenario overrides them, and schema defaults apply only once the merged
+ * the scenario overrides them (a template may build on another the same way),
+ * and schema defaults apply only once the merged
  * result is complete - which is why the template is validated as fully-optional
  * and the merge is validated again as a whole.
  *
@@ -18,12 +20,11 @@
  */
 
 import { readFile } from "node:fs/promises";
-import { dirname, extname, resolve } from "node:path";
+import { basename, dirname, extname, resolve } from "node:path";
 import { parse as yamlParse } from "yaml";
 import type { z } from "zod";
 import {
   scenarioFileSchema,
-  scenarioTemplateSchema,
   scenarioSchema,
   type Scenario,
   type ScenarioTemplate,
@@ -31,56 +32,28 @@ import {
 
 export class ScenarioError extends Error {}
 
-/** Load + validate a scenario file (`.yaml`, `.yml`, or `.json`). */
-export async function loadScenario(file: string): Promise<Scenario> {
+/**
+ * How many templates one scenario may stack. A chain is a readability cost
+ * paid by every author who has to find where a field came from, so this is
+ * deliberately small; it also bounds the damage of a chain that is merely
+ * long rather than cyclic.
+ */
+export const MAX_TEMPLATE_DEPTH = 4;
+
+/**
+ * Load + validate a scenario file (`.yaml`, `.yml`, or `.json`).
+ *
+ * A scenario without a `name` (from itself or any template) is named after its
+ * file stem, the last segment of its catalogue id, so every loaded scenario
+ * has one and run directories and logs never fall back to a generic label.
+ */
+export async function loadScenario(file: string): Promise<Scenario & { name: string }> {
   const path = resolve(file);
-  const raw = await readFile(path, "utf8").catch((cause: unknown) => {
-    throw new ScenarioError(`cannot read scenario file '${file}': ${(cause as Error).message}`);
-  });
-  const parsedObject = await Promise.resolve(raw)
-    .then((contents) => (extname(path) === ".json" ? JSON.parse(contents) : yamlParse(contents)))
-    .catch((cause: unknown) => {
-      throw new ScenarioError(`scenario '${file}' is not valid YAML/JSON: ${(cause as Error).message}`);
-    });
+  const { template, ...scenarioFields } = await readScenarioFile(path, "scenario", file);
 
-  const validatedObject = scenarioFileSchema.safeParse(parsedObject);
-  if (!validatedObject.success) throw validationError("scenario", file, validatedObject.error.issues);
-
-  const { template, ...scenarioFields } = validatedObject.data;
-  let templateFields: ScenarioTemplate = {};
-  if (template) {
-    const templatePath = resolve(dirname(path), template);
-    const rawTemplate = await readFile(templatePath, "utf8")
-      .catch((cause: unknown) => {
-        throw new ScenarioError(
-          `cannot read template file '${templatePath}' referenced by scenario '${file}': ${(cause as Error).message}`,
-        );
-      });
-    const parsedTemplate = await Promise.resolve(rawTemplate)
-      .then((contents) => (extname(templatePath) === ".json" ? JSON.parse(contents) : yamlParse(contents)))
-      .catch((cause: unknown) => {
-        throw new ScenarioError(
-          `template '${templatePath}' referenced by scenario '${file}' is not valid YAML/JSON: ${(cause as Error).message}`,
-        );
-      });
-    const validatedTemplate = scenarioTemplateSchema.safeParse(parsedTemplate);
-    if (!validatedTemplate.success) {
-      throw validationError("template", templatePath, validatedTemplate.error.issues, file);
-    }
-    templateFields = validatedTemplate.data;
-    if (templateFields.spectator) {
-      templateFields.spectator.mods = templateFields.spectator.mods.map((mod) => ({
-        ...mod, path: resolve(dirname(templatePath), mod.path),
-      }));
-    }
-  }
-
-  // Unlike client.cwd, a mod is an asset owned by the YAML that declares it.
-  if (scenarioFields.spectator) {
-    scenarioFields.spectator.mods = scenarioFields.spectator.mods.map((mod) => ({
-      ...mod, path: resolve(dirname(path), mod.path),
-    }));
-  }
+  const templateFields = template
+    ? await loadTemplate(template, path, `scenario '${file}'`, file, [path])
+    : {};
 
   const parsed = scenarioSchema.safeParse({ ...templateFields, ...scenarioFields });
   if (!parsed.success) throw validationError("scenario", file, parsed.error.issues);
@@ -91,16 +64,87 @@ export async function loadScenario(file: string): Promise<Scenario> {
   parsed.data.client.cwd = parsed.data.client.cwd
     ? resolve(dirname(path), parsed.data.client.cwd)
     : dirname(path);
-  return parsed.data;
+  return { ...parsed.data, name: parsed.data.name ?? basename(path, extname(path)) };
+}
+
+/**
+ * Read, parse and validate one scenario or template file, resolving its
+ * spectator mods against itself: unlike client.cwd, a mod is an asset owned by
+ * the YAML that declares it.
+ */
+async function readScenarioFile(
+  path: string,
+  kind: "scenario" | "template",
+  label: string,
+  referencedBy?: string,
+): Promise<z.output<typeof scenarioFileSchema>> {
+  const owner = referencedBy ? ` referenced by ${referencedBy}` : "";
+  const raw = await readFile(path, "utf8").catch((cause: unknown) => {
+    throw new ScenarioError(`cannot read ${kind} file '${label}'${owner}: ${(cause as Error).message}`);
+  });
+  const parsedObject = await Promise.resolve(raw)
+    .then((contents) => (extname(path) === ".json" ? JSON.parse(contents) : yamlParse(contents)))
+    .catch((cause: unknown) => {
+      throw new ScenarioError(`${kind} '${label}'${owner} is not valid YAML/JSON: ${(cause as Error).message}`);
+    });
+  const validated = scenarioFileSchema.safeParse(parsedObject);
+  if (!validated.success) throw validationError(kind, label, validated.error.issues, referencedBy);
+  const fields = validated.data;
+  if (fields.spectator) {
+    fields.spectator.mods = fields.spectator.mods.map((mod) => ({
+      ...mod, path: resolve(dirname(path), mod.path),
+    }));
+  }
+  return fields;
+}
+
+/**
+ * Resolve one `template:` reference, and any template it names in turn, into
+ * a single set of defaults. Each level merges exactly as a scenario merges
+ * over its template — a field it names replaces the inherited one whole — so
+ * a chain is the same rule applied repeatedly, not a second merge policy.
+ *
+ * `chain` holds every file already on the path, the scenario included, so a
+ * template that leads back to any of them is reported as the cycle it is.
+ */
+async function loadTemplate(
+  reference: string,
+  fromPath: string,
+  referencedBy: string,
+  scenarioFile: string,
+  chain: readonly string[],
+): Promise<ScenarioTemplate> {
+  const templatePath = resolve(dirname(fromPath), reference);
+  if (chain.includes(templatePath)) {
+    const loop = [...chain.slice(chain.indexOf(templatePath)), templatePath].join(" -> ");
+    throw new ScenarioError(`scenario '${scenarioFile}' has a template cycle: ${loop}`);
+  }
+  // `chain` is the scenario plus the templates above this one.
+  if (chain.length > MAX_TEMPLATE_DEPTH) {
+    throw new ScenarioError(
+      `scenario '${scenarioFile}' nests templates more than ${MAX_TEMPLATE_DEPTH} deep: `
+        + [...chain.slice(1), templatePath].join(" -> "),
+    );
+  }
+  const { template, ...fields } = await readScenarioFile(templatePath, "template", templatePath, referencedBy);
+  if (!template) return fields;
+  const inherited = await loadTemplate(
+    template,
+    templatePath,
+    `template '${templatePath}' (from scenario '${scenarioFile}')`,
+    scenarioFile,
+    [...chain, templatePath],
+  );
+  return { ...inherited, ...fields };
 }
 
 function validationError(
   kind: "scenario" | "template",
   file: string,
   issues: readonly z.core.$ZodIssue[],
-  scenarioFile?: string,
+  referencedBy?: string,
 ): ScenarioError {
-  const owner = scenarioFile ? ` referenced by scenario '${scenarioFile}'` : "";
+  const owner = referencedBy ? ` referenced by ${referencedBy}` : "";
   const detail = issues
     .map((issue) => `  - ${issue.path.join(".") || "<root>"}: ${issue.message}`)
     .join("\n");
