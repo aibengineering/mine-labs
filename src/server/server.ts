@@ -36,6 +36,7 @@ const serverJarPreparations = new Map<string, Promise<string>>();
 const SERVER_STOP_GRACE_MS = 8_000;
 const SERVER_KILL_GRACE_MS = 5_000;
 const RCON_CLOSE_GRACE_MS = 2_000;
+const SERVER_READY_TIMEOUT_MS = 180_000;
 
 export async function ensureServerJar(version: string, log: (s: string) => void): Promise<string> {
   const dir = join(mineLabsHome(), "servers", version);
@@ -242,30 +243,60 @@ export class MinecraftServer {
     await this.waitReady(signal);
   }
 
+  /**
+   * Probe RCON until the server answers, and give up the moment it cannot.
+   *
+   * The probe loop alone noticed a dead JVM only on its next pass, and a
+   * connect to a port nothing will ever listen on can take its own time to be
+   * refused. So the child's `close` is raced against every probe and every
+   * pause between them: a server that exits — most often a Java too old for
+   * the jar — fails at once with why, instead of up to a second later.
+   * `close` rather than `exit` because it follows the end of stderr, which is
+   * where the too-old-Java diagnosis is read from; on `exit` the last of it
+   * may not have been seen yet.
+   */
   private async waitReady(signal?: AbortSignal): Promise<void> {
-    const deadline = Date.now() + 180_000;
-    while (Date.now() < deadline) {
-      signal?.throwIfAborted();
+    const deadline = Date.now() + SERVER_READY_TIMEOUT_MS;
+    const proc = this.proc;
+    const ended = Promise.withResolvers<"ended">();
+    const onEnded = (): void => ended.resolve("ended");
+    // `start` spawned the child synchronously before calling this, so neither
+    // event can have been missed.
+    proc?.once("close", onEnded);
+    // A child that never spawned emits `error`, and may never emit `close`.
+    proc?.once("error", onEnded);
+    const failIfEnded = (): void => {
       if (this.spawnFailure) throw this.spawnFailure;
-      if (this.proc && this.proc.exitCode !== null) {
+      if (proc && (proc.exitCode !== null || proc.signalCode !== null)) {
         if (this.javaTooOld) throw new Error(this.javaTooOld);
-        throw new Error(`server exited with code ${this.proc.exitCode} before becoming ready`);
+        const status = proc.exitCode !== null ? `code ${proc.exitCode}` : `signal ${proc.signalCode}`;
+        throw new Error(`server exited with ${status} before becoming ready`);
       }
-      try {
-        this.rcon = new Rcon(this.cfg.host, this.cfg.rconPort, this.cfg.rconPassword);
-        await this.rcon.connect();
-        const out = await this.rcon.command("list");
-        if (out !== "") {
+    };
+    try {
+      while (Date.now() < deadline) {
+        signal?.throwIfAborted();
+        failIfEnded();
+        const rcon = new Rcon(this.cfg.host, this.cfg.rconPort, this.cfg.rconPassword);
+        this.rcon = rcon;
+        const probe = (async (): Promise<boolean> => {
+          await rcon.connect();
+          return (await rcon.command("list")) !== "";
+        })().catch(() => false); // not up yet
+        if ((await Promise.race([probe, ended.promise])) === true) {
           this.log("server ready");
           return;
         }
-      } catch {
-        // not up yet
+        // Closed without awaiting: a probe abandoned to a dead server may
+        // still be connecting, and its outcome no longer matters.
+        void rcon.close().catch(() => {});
+        await Promise.race([delay(1000, signal), ended.promise]);
       }
-      this.rcon?.close();
-      await delay(1000);
+    } finally {
+      proc?.off("close", onEnded);
+      proc?.off("error", onEnded);
     }
-    throw new Error("server did not become ready within 180s");
+    throw new Error(`server did not become ready within ${SERVER_READY_TIMEOUT_MS / 1000}s`);
   }
 
   async stop(options?: { force?: boolean }): Promise<void> {
