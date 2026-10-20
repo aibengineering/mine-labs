@@ -16,6 +16,28 @@ export function resourceId(value: string): string {
 }
 
 /**
+ * The qualified item id of an item stack written in vanilla's component
+ * syntax, such as `minecraft:shield` for `shield[damage=335]`. Anything that
+ * compares a declared item with an observed one compares this: the game
+ * reports an item's id and its components separately.
+ */
+export function itemId(stack: string): string {
+  const components = stack.indexOf("[");
+  return resourceId(components < 0 ? stack : stack.slice(0, components));
+}
+
+/**
+ * An item stack as `give` and `item replace` take it: the id qualified, and
+ * any components, `[damage=335]` say, passed through untouched. Qualifying the
+ * whole string would miss a bare id whose components name a namespace.
+ */
+export function itemStack(stack: string): string {
+  const components = stack.indexOf("[");
+  return components < 0 ? resourceId(stack) : itemId(stack) + stack.slice(components);
+}
+
+
+/**
  * Point a command at a dimension.
  *
  * Rcon has no executor, so a bare command runs in the overworld at the origin

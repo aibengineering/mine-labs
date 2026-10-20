@@ -4,6 +4,7 @@
 import { once } from "node:events";
 import mineflayer from "mineflayer";
 import { runNodeClient } from "../../client/node.ts";
+import { itemId } from "../../util/minecraft.ts";
 
 await runNodeClient(async (ctx) => {
   const bot = mineflayer.createBot({
@@ -20,13 +21,20 @@ await runNodeClient(async (ctx) => {
       const actual = { food: bot.food, saturation: bot.foodSaturation, health: bot.health }[key];
       if (expect[key] !== undefined && actual !== expect[key]) found.push(`${key} ${actual} != ${expect[key]}`);
     }
+    // Declared stacks may carry components; the client sees the base id.
+    const me = ctx.scenario.players.find((player) => player.name === ctx.username);
+    const declared = [...(me?.inventory ?? []).map((stack) => stack.item), ...Object.values(me?.equipment ?? {})];
+    for (const stack of declared) {
+      const name = itemId(stack).replace(/^minecraft:/u, "");
+      if (!bot.inventory.slots.some((slot) => slot?.name === name)) found.push(`no ${name}`);
+    }
     for (const wanted of expect.items ?? []) {
-      const item = [...bot.inventory.slots].find((slot) => slot?.name === wanted.name);
-      if (!item) found.push(`no ${wanted.name}`);
-      else if (wanted.damage !== undefined && item.durabilityUsed !== wanted.damage) {
-        found.push(`${wanted.name} damage ${item.durabilityUsed} != ${wanted.damage}`);
+      const items = bot.inventory.slots.filter((slot) => slot?.name === wanted.name);
+      if (!items.some((item) => wanted.damage === undefined || item.durabilityUsed === wanted.damage)) {
+        found.push(`${wanted.name} damage ${items.map((item) => item.durabilityUsed).join("/") || "absent"} != ${wanted.damage}`);
       }
     }
+
     return found;
   };
   const deadline = Date.now() + 3000;

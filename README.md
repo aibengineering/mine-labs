@@ -227,7 +227,11 @@ players:
       head: golden_helmet
 ```
 
+Items in `inventory` and `equipment` may carry vanilla item components, such as
+`"shield[damage=335]"` for a worn shield; see [Item components](docs/reference.md#item-components).
+
 Supported slots are `head`, `chest`, `legs`, `feet`, `mainhand`, and `offhand`.
+
 Each entry grants one item directly into that slot; do not also list it in
 inventory unless a spare is intended. Equipment is applied after reusable-player
 cleanup and before inventory grants, so a held item cannot overwrite a grant.

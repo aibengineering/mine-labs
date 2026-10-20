@@ -49,6 +49,8 @@ players:
     # saturation: 0     # optional: starting saturation, whole points up to food
     inventory:          # optional: provisioned after cleanup, before ctx.start
       - { item: iron_sword, count: 1 }
+      - { item: "diamond_pickaxe[damage=1556]" }   # vanilla item components pass through
+    # equipment: { offhand: "shield[damage=335]" }  # head chest legs feet mainhand offhand
 
 client:
   command: bun
@@ -131,7 +133,24 @@ again: the client observes the arranged values before it replies `prepared`.
 Regeneration is the scenario's to control, for example with
 `gamerules: { naturalRegeneration: false }`.
 
+### Item components
+
+`players[].inventory[].item` and every `players[].equipment` slot take an item
+id, optionally followed by vanilla's item component syntax, exactly as `/give`
+accepts it: `diamond_pickaxe[damage=1556]` for a worn tool,
+`shield[minecraft:damage=335]`, or `potion[potion_contents={potion:"minecraft:healing"}]`.
+Mine Labs qualifies the id and passes the components to `give` and
+`item replace` untouched, so the game itself checks them when the player is
+prepared; a quoted YAML string keeps the brackets and braces literal.
+
+The game reports an item's id and its components separately, so anything
+comparing a declared item with an observed one compares the base id. A
+JavaScript client can use `itemId` from `mine-labs/client`:
+`itemId("shield[damage=335]")` is `minecraft:shield`. The `hasItem` goal takes a
+plain item id and counts every stack of it, whatever its components.
+
 ### Reusable scenario templates
+
 
 Scenarios that share an arena can move only the world setup into a separate
 template file:

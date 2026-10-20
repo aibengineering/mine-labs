@@ -19,3 +19,6 @@ export {
 } from "./protocol.js";
 export { runNodeClient, type NodeClientSession } from "./node.js";
 export type { PlayerSpec, ScenarioDefinition } from "../scenario/schema.js";
+/** Compare a declared `inventory` or `equipment` item with an observed one by this base id. */
+export { itemId } from "../util/minecraft.js";
+

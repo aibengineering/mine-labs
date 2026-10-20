@@ -165,3 +165,18 @@ test("a player's starting hunger is whole points, saturation within food, and ne
   assert.deepEqual(peaceful.error?.issues.map((issue) => issue.path), [["players", 0, "food"]]);
   assert.equal(scenarioSchema.safeParse({ ...player({ food: 20, saturation: 3 }), world: { difficulty: "peaceful" } }).success, true);
 });
+
+test("inventory and equipment items may carry vanilla item components", () => {
+  const base = { client: { command: "test-client" }, goal: { kind: "completion" as const } };
+  const items = (inventory: string, offhand = "shield") => scenarioSchema.safeParse({
+    ...base, players: [{ name: "Worn", inventory: [{ item: inventory }], equipment: { offhand } }],
+  });
+  assert.equal(items("diamond_pickaxe[damage=1556]", "shield[damage=335]").success, true);
+  assert.equal(items("minecraft:shield[minecraft:damage=335]").success, true);
+  assert.equal(items("potion[potion_contents={potion:\"minecraft:healing\"}]").success, true);
+  assert.equal(items("bread").success, true);
+  const rejected = items("Diamond Pickaxe", "shield[damage=335");
+  assert.deepEqual(rejected.error?.issues.map((issue) => issue.path.join(".")), ["players.0.inventory.0.item", "players.0.equipment.offhand"]);
+  assert.match(rejected.error?.issues[0]?.message ?? "", /optionally with \[components\]/u);
+  assert.equal(items("shield[damage=1]trailing").success, false);
+});

@@ -15,7 +15,7 @@
 
 import type { Dimension, PlayerSpec } from "../scenario/schema.js";
 import { posToCommand } from "../scenario/schema.js";
-import { inDimension, resourceId } from "../util/minecraft.js";
+import { inDimension, itemStack } from "../util/minecraft.js";
 import { delay } from "../util/fs.js";
 
 const MINECRAFT_TAG = /^[A-Za-z0-9_.+-]+$/u;
@@ -48,10 +48,11 @@ export async function preparePlayerForTrial(options: PreparePlayerForTrialOption
   // Equip first so a main-hand declaration cannot overwrite an inventory grant.
   for (const [slot, item] of Object.entries(player.equipment ?? {})) {
     const target = EQUIPMENT_SLOTS[slot as keyof typeof EQUIPMENT_SLOTS];
-    await commands.command(`item replace entity ${player.name} ${target} with ${resourceId(item)} 1`);
+    await commands.command(`item replace entity ${player.name} ${target} with ${itemStack(item)} 1`);
   }
   for (const stack of player.inventory) {
-    await commands.command(`give ${player.name} ${resourceId(stack.item)} ${stack.count}`);
+    await commands.command(`give ${player.name} ${itemStack(stack.item)} ${stack.count}`);
+
   }
   if (player.op) await commands.command(`op ${player.name}`);
   const teleport = player.pos

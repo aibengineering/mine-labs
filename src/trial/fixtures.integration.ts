@@ -97,3 +97,17 @@ test("kill and entityCount count only the tagged or nearby entities they name", 
   });
   assert.deepEqual(results.map((result) => [result.outcome, result.goal.detail, result.error]), [["pass", "all(5) passed", undefined], ["pass", "all(5) passed", undefined]], JSON.stringify(results.map((result) => result.goal)));
 });
+
+test("inventory and equipment items keep their declared components", { timeout: 180_000 }, async () => {
+  const results = await runTwice({
+    name: "components-live", ...arena, client,
+    players: [{
+      name: "Worn", pos: [0.5, -60, 0.5],
+      inventory: [{ item: "diamond_pickaxe[damage=1556]" }, { item: "minecraft:bread", count: 3 }],
+      equipment: { offhand: "shield[minecraft:damage=335]", head: "iron_helmet" },
+    }],
+    params: { expect: { items: [{ name: "diamond_pickaxe", damage: 1556 }, { name: "shield", damage: 335 }, { name: "iron_helmet", damage: 0 }] } },
+    goal: { kind: "all", timeout: 30, goals: [{ kind: "hasItem", item: "bread", count: 3 }, { kind: "completion" }] },
+  });
+  assert.deepEqual(results.map((result) => [result.outcome, result.goal.detail, result.error]), [["pass", "all(2) passed", undefined], ["pass", "all(2) passed", undefined]], JSON.stringify(results.map((result) => result.goal)));
+});

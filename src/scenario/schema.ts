@@ -106,14 +106,21 @@ const scheduleEntrySchema = z.strictObject({
 });
 export type ScheduleEntry = z.infer<typeof scheduleEntrySchema>;
 
-const minecraftResourceId = /^(?:[a-z0-9_.-]+:)?[a-z0-9_./-]+$/u;
+/**
+ * A Minecraft item id, optionally followed by vanilla's component syntax:
+ * `diamond_pickaxe`, `minecraft:shield[damage=335]`. The components are passed
+ * to the game as written, which checks them when the item is given.
+ */
+const itemStackPattern = /^(?:[a-z0-9_.-]+:)?[a-z0-9_./-]+(?:\[.*\])?$/su;
+const itemStackMessage = "must be a Minecraft item id, optionally with [components], e.g. shield[damage=335]";
 const equipmentSchema = z.partialRecord(
   z.enum(["head", "chest", "legs", "feet", "mainhand", "offhand"]),
-  z.string().regex(minecraftResourceId, "equipment item must be a Minecraft resource id"),
+  z.string().regex(itemStackPattern, `equipment item ${itemStackMessage}`),
 );
 
 const inventoryItemSchema = z.strictObject({
-  item: z.string().regex(minecraftResourceId, "inventory item must be a Minecraft resource id"),
+  item: z.string().regex(itemStackPattern, `inventory item ${itemStackMessage}`),
+
   count: z.number().int().positive().max(9_999).default(1),
 });
 export type InventoryItemSpec = z.infer<typeof inventoryItemSchema>;

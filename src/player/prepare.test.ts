@@ -27,7 +27,24 @@ test("equipment follows reusable cleanup and precedes inventory grants and telep
   assert.ok(lastEquip < host.commands.indexOf("tp Collector 0 -59 0"));
 });
 
+test("item components are passed through to the grant and the equipped slot", async () => {
+  const host = new FakePlayerHost();
+  await preparePlayerForTrial({ commands: host, resetReusablePlayer: false,
+    player: { name: "Worn", op: false,
+      inventory: [{ item: "diamond_pickaxe[damage=1556]", count: 1 }, { item: "shield[minecraft:damage=10]", count: 1 }],
+      equipment: { offhand: "shield[damage=335]", head: "minecraft:iron_helmet" },
+    },
+  });
+  assert.deepEqual(host.commands, [
+    "item replace entity Worn weapon.offhand with minecraft:shield[damage=335] 1",
+    "item replace entity Worn armor.head with minecraft:iron_helmet 1",
+    "give Worn minecraft:diamond_pickaxe[damage=1556] 1",
+    "give Worn minecraft:shield[minecraft:damage=10] 1",
+  ]);
+});
+
 test("reused trials remove unbracketed tags before restoring declared inventory", async () => {
+
   const host = new FakePlayerHost();
   const player = {
     name: "Collector",
