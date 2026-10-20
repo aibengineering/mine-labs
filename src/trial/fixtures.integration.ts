@@ -107,7 +107,12 @@ test("inventory and equipment items keep their declared components", { timeout: 
       equipment: { offhand: "shield[minecraft:damage=335]", head: "iron_helmet" },
     }],
     params: { expect: { items: [{ name: "diamond_pickaxe", damage: 1556 }, { name: "shield", damage: 335 }, { name: "iron_helmet", damage: 0 }] } },
-    goal: { kind: "all", timeout: 30, goals: [{ kind: "hasItem", item: "bread", count: 3 }, { kind: "completion" }] },
+    goal: { kind: "all", timeout: 30, goals: [
+      { kind: "hasItem", item: "bread", count: 3, max: 3 },
+      { kind: "hasItem", item: "arrow", count: 0, max: 0 },
+      { kind: "completion" },
+    ] },
   });
-  assert.deepEqual(results.map((result) => [result.outcome, result.goal.detail, result.error]), [["pass", "all(2) passed", undefined], ["pass", "all(2) passed", undefined]], JSON.stringify(results.map((result) => result.goal)));
+  assert.deepEqual(results.map((result) => [result.outcome, result.goal.detail, result.error]), [["pass", "all(3) passed", undefined], ["pass", "all(3) passed", undefined]], JSON.stringify(results.map((result) => result.goal)));
+
 });

@@ -69,3 +69,17 @@ test("inspection names an entity goal's scope", () => {
     "pig within 5 blocks of 1 2 3: count between 0 and 0",
   ]);
 });
+
+test("inspection reads a bounded hasItem as a range", () => {
+  const scenario = scenarioSchema.parse({
+    client: { command: "bun" }, players: [{ name: "Archer" }],
+    goal: { kind: "all", goals: [
+      { kind: "hasItem", item: "arrow", count: 0, max: 0 },
+      { kind: "hasItem", item: "bone", count: 3, max: 3 },
+      { kind: "hasItem", item: "bread", count: 1, max: 4 },
+    ] },
+  });
+  assert.deepEqual(inspectScenario("bounded", scenario).goal.children?.map(child => child.label), [
+    "Archer: carry no arrow", "Archer: carry exactly 3 x bone", "Archer: carry between 1 and 4 x bread",
+  ]);
+});

@@ -62,7 +62,13 @@ function inspectGoal(goal: GoalCondition, firstPlayer: string): InspectionGoal {
     case "completion": return {label: `${who}: driver must report successful completion (checks defined in driver code)`};
     case "reach": return {label: `${who}: reach ${posToCommand(goal.pos)} within ${goal.radius ?? 2} blocks, in the player's current dimension`};
     case "health": return {label: `${who}: health at least ${goal.health ?? 1}`};
-    case "hasItem": return {label: `${who}: carry at least ${goal.count ?? 1} x ${goal.item}`};
+    case "hasItem": {
+      const count = goal.count ?? 1;
+      if (goal.max === undefined) return {label: `${who}: carry at least ${count} x ${goal.item}`};
+      if (goal.max === 0) return {label: `${who}: carry no ${goal.item}`};
+      return {label: `${who}: carry ${count === goal.max ? `exactly ${count}` : `between ${count} and ${goal.max}`} x ${goal.item}`};
+    }
+
     case "chat": return {label: `${who}: chat must contain every listed text: ${JSON.stringify(goal.contains)}`};
     case "entityDistance": return {label: `${who}: stay more than ${goal.distance} blocks from every ${goal.entity}`};
     case "entityCount": return {label: `${goal.entity}${describeEntityScope(goal)}: count between ${goal.min ?? 0} and ${goal.max ?? "unlimited"}`};

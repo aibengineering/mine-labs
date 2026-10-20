@@ -210,7 +210,7 @@ extension — the last segment of its catalogue id.
 | `reach`     | `pos`, `radius?` (default 2)    | the player is within radius of pos             |
 | `kill`      | `target`, `tag?`, `near?`       | entity type existed, now count == 0            |
 | `entityCount` | `entity`, `min?`, `max?`, `tag?`, `near?` | live entity count within [min, max]  |
-| `hasItem`   | `item`, `count?` (default 1)    | player's inventory holds count of item         |
+| `hasItem`   | `item`, `count?` (default 1), `max?` | player's inventory holds count of item, and at most max |
 | `blockAt`   | `pos`, `block`                  | block at pos matches the requested block       |
 | `blocksAt`  | `positions`, `block`            | every listed position matches the requested block |
 | `health`    | `health?` (default 1)           | player health >= threshold                     |
@@ -227,7 +227,14 @@ client. Composite `all`/`any` goals do not accept `who`.
 trial. Unknown fields are rejected so misspelled scenario options cannot be
 silently ignored.
 
+`hasItem` passes once the player carries at least `count` of the item. With
+`max` it also requires at most `max`, so `count: 3, max: 3` means exactly three
+and `count: 0, max: 0` means it carries none. `max` cannot be below `count`,
+whose default is 1, so "none" needs both written. The goal text reads
+`have no arrow`, `have exactly 3× bone` or `have 1..4× bread`.
+
 `kill` and `entityCount` count every entity of their type, in every dimension,
+
 unless they name a scope. `tag: penA` counts only entities carrying that
 scoreboard tag, such as ones summoned with `nbt: "{Tags:[\"penA\"]}"`, and
 `near: { pos: [x, y, z], radius: 4 }` only those within `radius` blocks of an

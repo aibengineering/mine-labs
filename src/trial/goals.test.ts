@@ -297,3 +297,40 @@ test("an entity scope names a scoreboard tag and a point with a radius, nothing 
   assert.equal(goal({ near: { pos: "~ ~ ~", radius: 2 } }), false);
   assert.equal(goal({ near: { pos: [0, 0, 0], radius: 2, dimension: "the_end" } }), false);
 });
+
+test("hasItem with max passes only within its bounds, and count 0 with max 0 means none", async () => {
+  let carried = 0;
+  const observer: GoalObserver = { ...passingObserver, countPlayerItems: async () => carried };
+  const evaluate = async (goal: { count?: number; max?: number }) =>
+    evaluateGoal({ kind: "hasItem", item: "arrow", ...goal }, context(new Map(), observer));
+
+  assert.deepEqual(await evaluate({ count: 0, max: 0 }), { state: "passed", detail: "arrow: 0 (want 0..0)" });
+  carried = 1;
+  assert.deepEqual(await evaluate({ count: 0, max: 0 }), { state: "pending", detail: "arrow: 1 (want 0..0)" });
+  carried = 3;
+  assert.equal((await evaluate({ count: 2, max: 3 })).state, "passed");
+  carried = 4;
+  assert.equal((await evaluate({ count: 2, max: 3 })).state, "pending");
+  // Without max the goal reads as it always has.
+  assert.deepEqual(await evaluate({ count: 2 }), { state: "passed", detail: "arrow: 4/2" });
+
+  assert.equal(describeGoal({ kind: "hasItem", item: "arrow", count: 0, max: 0 }), "have no arrow");
+  assert.equal(describeGoal({ kind: "hasItem", item: "arrow", max: 1 }), "have exactly 1× arrow");
+  assert.equal(describeGoal({ kind: "hasItem", item: "arrow", count: 2, max: 5 }), "have 2..5× arrow");
+  assert.equal(describeGoal({ kind: "hasItem", item: "arrow", count: 2 }), "have 2× arrow");
+});
+
+test("hasItem max cannot fall below its count, including the default count of one", () => {
+  const goal = (fields: Record<string, unknown>) => scenarioSchema.safeParse({
+    client: { command: "test-client" }, goal: { kind: "hasItem", item: "arrow", ...fields },
+  });
+  assert.equal(goal({ count: 0, max: 0 }).success, true);
+  assert.equal(goal({ count: 0 }).success, true);
+  assert.equal(goal({ max: 3 }).success, true);
+  const defaulted = goal({ max: 0 });
+  assert.deepEqual(defaulted.error?.issues.map((issue) => issue.path), [["goal", "max"]]);
+  assert.match(defaulted.error?.issues[0]?.message ?? "", /count: 0, max: 0/u);
+  assert.equal(goal({ count: 4, max: 3 }).success, false);
+  assert.equal(goal({ max: -1 }).success, false);
+  assert.equal(goal({ max: 1.5 }).success, false);
+});

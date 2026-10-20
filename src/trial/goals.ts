@@ -131,7 +131,8 @@ export async function evaluateGoal(goal: GoalCondition, ctx: GoalContext): Promi
       const wanted = goal.item.toLowerCase();
       const have = await ctx.observer.countPlayerItems(player, wanted);
       const need = goal.count ?? 1;
-      return observed(have >= need, `${wanted}: ${have}/${need}`);
+      if (goal.max === undefined) return observed(have >= need, `${wanted}: ${have}/${need}`);
+      return observed(have >= need && have <= goal.max, `${wanted}: ${have} (want ${need}..${goal.max})`);
     }
     case "blockAt": {
       const wanted = goal.block.toLowerCase().replace(/^minecraft:/u, "");
@@ -211,7 +212,15 @@ export async function evaluateGoal(goal: GoalCondition, ctx: GoalContext): Promi
   }
 }
 
+/** How many of an item a `hasItem` goal wants: `2×`, `exactly 3×`, `2..5×`, or `no`. */
+function itemRange(count: number, max: number | undefined): string {
+  if (max === undefined) return `${count}×`;
+  if (max === 0) return "no";
+  return count === max ? `exactly ${count}×` : `${count}..${max}×`;
+}
+
 /** Flat, human-readable rendering of a goal tree for reports. */
+
 export function describeGoal(goal: GoalCondition, indent = 0): string {
   const pad = "  ".repeat(indent);
   const base = (() => {
@@ -226,7 +235,7 @@ export function describeGoal(goal: GoalCondition, indent = 0): string {
       case "entityDistance":
         return `distance from every ${goal.entity} > ${goal.distance}`;
       case "hasItem":
-        return `have ${goal.count ?? 1}× ${goal.item}`;
+        return `have ${itemRange(goal.count ?? 1, goal.max)} ${goal.item}`;
       case "blockAt":
         return `${goal.block} at ${goal.pos.join(",")}`;
       case "blocksAt": {

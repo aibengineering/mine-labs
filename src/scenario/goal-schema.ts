@@ -85,7 +85,10 @@ const hasItemGoalConditionSchema = z.strictObject({
   ...leafGoalFields,
   kind: z.literal("hasItem"),
   item: z.string().min(1),
-  count: z.number().int().positive().optional(),
+  /** Fewest the player must carry; default 1. */
+  count: z.number().int().nonnegative().optional(),
+  /** Most the player may carry; `count: 0, max: 0` means it carries none. */
+  max: z.number().int().nonnegative().optional(),
 });
 
 const blockAtGoalConditionSchema = z.strictObject({
@@ -204,6 +207,14 @@ function validateGoalTree(goal: GoalSpec, context: z.RefinementCtx): void {
         message: "minimum cannot exceed maximum",
       });
     }
+    if (condition.kind === "hasItem" && condition.max !== undefined && (condition.count ?? 1) > condition.max) {
+      context.addIssue({
+        code: "custom",
+        path: [...path, "max"],
+        message: `max cannot be below count (${condition.count ?? 1}${condition.count === undefined ? ", the default" : ""}); for none, write count: 0, max: 0`,
+      });
+    }
+
 
     if (condition.kind === "all" || condition.kind === "any") {
       condition.goals.forEach((child, index) => visit(child, [...path, "goals", index]));
