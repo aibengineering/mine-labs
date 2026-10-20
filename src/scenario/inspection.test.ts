@@ -30,3 +30,17 @@ test("inspection preserves nested logic, player scope, explicit zero radius, def
   assert.ok(inspection.setup.find(section=>section.title==="Players")!.lines.some(line=>line.includes("64 x cobblestone")));
   assert.ok(!JSON.stringify(inspection).includes("must-not-appear"));
 });
+
+test("inspection lists each schedule entry with when it runs", () => {
+  const scenario = scenarioSchema.parse({
+    client: { command: "bun" }, goal: { kind: "completion" },
+    schedule: [
+      { afterTicks: 20, run: "say late" },
+      { afterTicks: 5, when: "entity @a[name=Bot,x=2,y=-61,z=-5,dx=4,dy=4,dz=4]", run: ["say a", "say b"] },
+    ],
+  });
+  assert.deepEqual(inspectScenario("scheduled", scenario).setup.find(section => section.title === "schedule commands")?.lines, [
+    "Once 20 ticks after start:", "  say late",
+    "Once 5 ticks after start, then when entity @a[name=Bot,x=2,y=-61,z=-5,dx=4,dy=4,dz=4]:", "  say a", "  say b",
+  ]);
+});

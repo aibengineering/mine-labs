@@ -3,7 +3,7 @@ import { mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { acceptedNoOp, compileScenario, pinRegionCommand, regionLoadedProbes, unpinCommands, writeDatapack, UNLOADED_POSITION } from "./compile.js";
+import { acceptedNoOp, armScheduleCommands, compileScenario, datapackFunctions, DISARM_SCHEDULE, pinRegionCommand, regionLoadedProbes, unpinCommands, writeDatapack, UNLOADED_POSITION } from "./compile.js";
 import { scenarioSchema } from "./schema.js";
 
 test("large fixture commands are enabled before reset and scenario geometry", () => {
@@ -266,4 +266,69 @@ test("a pinned region is probed at its corners, in its own dimension, before set
   assert.ok(UNLOADED_POSITION.test("That position is not loaded"));
   assert.ok(!UNLOADED_POSITION.test("Test passed"));
   assert.equal(acceptedNoOp("data merge block -28 82 357 {SpawnCount:0s}")?.test("Nothing changed. The specified properties already have these values"), true);
+});
+
+test("schedule entries compile to once-only functions gated on the start clock, in the arena dimension", () => {
+  const scenario = scenarioSchema.parse({
+    client: { command: "test-client" },
+    world: { dimension: "the_end" },
+    players: [{ name: "Bot", pos: [0, 60, 0] }],
+    tick: ["/kill @e[type=minecraft:item]"],
+    schedule: [
+      { afterTicks: 20, run: "/summon minecraft:fireball 0 70 0" },
+      { when: "entity @a[name=Bot,x=2,y=-61,z=-5,dx=40,dy=4,dz=10]", run: ["say one", "say two"] },
+      { afterTicks: 100, when: "score #t clock matches 100..", run: "say both" },
+    ],
+    goal: { kind: "survive", seconds: 1 },
+  });
+  const functions = datapackFunctions(scenario);
+  assert.deepEqual(Object.keys(functions).sort(), [
+    "schedule/0.mcfunction", "schedule/1.mcfunction", "schedule/2.mcfunction", "schedule/tick.mcfunction", "tick.mcfunction",
+  ]);
+  assert.equal(functions["tick.mcfunction"], [
+    // A function file refuses a leading slash; tick and schedule both drop it.
+    "execute in minecraft:the_end run kill @e[type=minecraft:item]",
+    "execute if score #armed ml_schedule matches 1 run function mine_labs_scenario:schedule/tick",
+  ].join("\n") + "\n");
+  assert.equal(functions["schedule/tick.mcfunction"], [
+    "scoreboard players add #clock ml_schedule 1",
+    "execute in minecraft:the_end unless score #done0 ml_schedule matches 1 if score #clock ml_schedule matches 20.. run function mine_labs_scenario:schedule/0",
+    "execute in minecraft:the_end unless score #done1 ml_schedule matches 1 if entity @a[name=Bot,x=2,y=-61,z=-5,dx=40,dy=4,dz=10] run function mine_labs_scenario:schedule/1",
+    "execute in minecraft:the_end unless score #done2 ml_schedule matches 1 if score #clock ml_schedule matches 100.. if score #t clock matches 100.. run function mine_labs_scenario:schedule/2",
+  ].join("\n") + "\n");
+  // The entry is marked done before its commands, so a failing command cannot make it repeat.
+  assert.equal(functions["schedule/0.mcfunction"], "scoreboard players set #done0 ml_schedule 1\nexecute in minecraft:the_end run summon minecraft:fireball 0 70 0\n");
+  assert.equal(functions["schedule/1.mcfunction"], "scoreboard players set #done1 ml_schedule 1\nexecute in minecraft:the_end run say one\nexecute in minecraft:the_end run say two\n");
+  assert.deepEqual(armScheduleCommands(scenario), [
+    "scoreboard objectives add ml_schedule dummy",
+    "scoreboard players set #clock ml_schedule 0",
+    "scoreboard players set #done0 ml_schedule 0",
+    "scoreboard players set #done1 ml_schedule 0",
+    "scoreboard players set #done2 ml_schedule 0",
+    "scoreboard players set #armed ml_schedule 1",
+  ]);
+  assert.equal(DISARM_SCHEDULE, "scoreboard players set #armed ml_schedule 0");
+  // Arming a reused world finds the objective already there.
+  assert.equal(acceptedNoOp("scoreboard objectives add ml_schedule dummy")?.test("An objective already exists by that name"), true);
+});
+
+test("an afterTicks of zero runs on the first tick after start, and no schedule writes no schedule", () => {
+  const base = { client: { command: "test-client" }, goal: { kind: "survive" as const, seconds: 1 } };
+  const immediate = datapackFunctions(scenarioSchema.parse({ ...base, schedule: [{ afterTicks: 0, run: "say go" }] }));
+  assert.equal(immediate["schedule/tick.mcfunction"]?.split("\n")[1],
+    "execute unless score #done0 ml_schedule matches 1 run function mine_labs_scenario:schedule/0");
+  const none = scenarioSchema.parse({ ...base, tick: ["say tick"] });
+  assert.deepEqual(datapackFunctions(none), { "tick.mcfunction": "say tick\n" });
+  assert.deepEqual(armScheduleCommands(none), []);
+});
+
+test("rewriting the datapack removes a previous scenario's schedule", async () => {
+  const worldDir = await mkdtemp(join(tmpdir(), "mine-labs-schedule-"));
+  const base = { client: { command: "test-client" }, goal: { kind: "survive" as const, seconds: 1 } };
+  const functionDir = join(worldDir, "datapacks", "mine_labs_scenario", "data", "mine_labs_scenario", "function");
+  await writeDatapack(scenarioSchema.parse({ ...base, schedule: [{ afterTicks: 5, run: "say once" }] }), worldDir);
+  assert.match(await readFile(join(functionDir, "schedule", "0.mcfunction"), "utf8"), /say once/u);
+  await writeDatapack(scenarioSchema.parse(base), worldDir);
+  await assert.rejects(readFile(join(functionDir, "schedule", "0.mcfunction"), "utf8"), { code: "ENOENT" });
+  assert.equal(await readFile(join(functionDir, "tick.mcfunction"), "utf8"), "\n");
 });

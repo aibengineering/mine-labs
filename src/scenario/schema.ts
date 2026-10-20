@@ -76,6 +76,32 @@ const entitySchema = z.strictObject({
 });
 export type EntitySpec = z.infer<typeof entitySchema>;
 
+/** One command, or several run in order. Leading slashes are dropped, as for `tick`. */
+const scheduleCommandsSchema = z.union([
+  z.string().trim().min(1),
+  z.array(z.string().trim().min(1)).min(1),
+]);
+
+/**
+ * A one-shot command run from the generated datapack, at most once per trial.
+ *
+ * `afterTicks` counts game ticks from `start`; `when` is the text that follows
+ * `execute if`, checked every tick. With both, the entry is armed after
+ * `afterTicks` and then waits for `when`.
+ */
+const scheduleEntrySchema = z.strictObject({
+  afterTicks: z.number().int().nonnegative().max(2_147_483_647).optional(),
+  when: z.string().trim().min(1)
+    .refine((condition) => !/^\/?(?:execute|if|unless)\s/u.test(condition), {
+      message: "write only the condition that follows `execute if`, e.g. `entity @a[name=Bot]`",
+    })
+    .optional(),
+  run: scheduleCommandsSchema,
+}).refine((entry) => entry.afterTicks !== undefined || entry.when !== undefined, {
+  message: "a schedule entry needs afterTicks, when, or both",
+});
+export type ScheduleEntry = z.infer<typeof scheduleEntrySchema>;
+
 const minecraftResourceId = /^(?:[a-z0-9_.-]+:)?[a-z0-9_./-]+$/u;
 const equipmentSchema = z.partialRecord(
   z.enum(["head", "chest", "legs", "feet", "mainhand", "offhand"]),
@@ -182,6 +208,8 @@ const scenarioFields = {
   setup: z.array(z.string()),
   /** Commands executed every tick through a generated datapack. */
   tick: z.array(z.string()),
+  /** One-shot commands the generated datapack runs once per trial, after `start`. */
+  schedule: z.array(scheduleEntrySchema),
   goal: goalSchema,
   client: clientCommandSchema,
 };
@@ -210,6 +238,7 @@ const completeScenarioSchema = z.strictObject({
   reset: scenarioFields.reset.default([]),
   setup: scenarioFields.setup.default([]),
   tick: scenarioFields.tick.default([]),
+  schedule: scenarioFields.schedule.default([]),
 });
 
 /** Complete runner input: the client-visible definition plus its launch command. */

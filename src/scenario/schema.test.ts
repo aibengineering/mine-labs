@@ -125,3 +125,25 @@ test("a scenario outside the overworld must say where each player starts", () =>
   assert.equal(result.success, false);
   assert.deepEqual(result.error?.issues.map((issue) => issue.path), [["players", 0, "pos"]]);
 });
+
+test("schedule entries need a tick count or a condition, and take one command or a list", () => {
+  const base = { client: { command: "test-client" }, goal: { kind: "completion" as const } };
+  const parsed = scenarioSchema.parse({ ...base, schedule: [
+    { afterTicks: 0, run: "say now" },
+    { when: "entity @a[name=Bot,x=2,y=-61,z=-5,dx=40,dy=4,dz=10]", run: ["say a", "say b"] },
+    { afterTicks: 40, when: "score #t clock matches 100..", run: "say later" },
+  ] });
+  assert.equal(parsed.schedule.length, 3);
+  assert.deepEqual(scenarioSchema.parse(base).schedule, []);
+
+  const rejected = (schedule: unknown[]): string[] => {
+    const result = scenarioSchema.safeParse({ ...base, schedule });
+    return result.success ? [] : result.error.issues.map((issue) => `${issue.path.join(".")}: ${issue.message}`);
+  };
+  assert.match(rejected([{ run: "say never" }]).join("\n"), /schedule\.0: a schedule entry needs afterTicks, when, or both/u);
+  assert.match(rejected([{ afterTicks: 1.5, run: "say" }]).join("\n"), /schedule\.0\.afterTicks/u);
+  assert.match(rejected([{ afterTicks: -1, run: "say" }]).join("\n"), /schedule\.0\.afterTicks/u);
+  assert.match(rejected([{ afterTicks: 1, run: [] }]).join("\n"), /schedule\.0\.run/u);
+  assert.match(rejected([{ when: "execute if entity @a", run: "say" }]).join("\n"), /follows `execute if`/u);
+  assert.match(rejected([{ afterTicks: 1, run: "say", every: 5 }]).join("\n"), /Unrecognized key/iu);
+});

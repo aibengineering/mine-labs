@@ -160,3 +160,39 @@ test("world and client gates precede observer arrival, activation, and thaw", as
     assert.equal(await readFile(join(server.worldDir, "datapacks", "mine_labs_scenario", "data", "mine_labs_scenario", "function", "tick.mcfunction"), "utf8"), "say started\n");
   } finally { await rm(root, { recursive: true, force: true }); }
 });
+
+test("a schedule is disarmed before its datapack loads, armed just before start, and dropped at restore", async () => {
+  const root = await mkdtemp(join(tmpdir(), "mine-labs-schedule-trial-"));
+  const commands: string[] = [];
+  const restores: Array<(log: (message: string) => void) => Promise<void>> = [];
+  const fixture = scenarioSchema.parse({
+    name: "scheduled", players: [{ name: "Tester", pos: [0, -60, 0] }],
+    reset: ["fill -4 -60 -4 4 -50 4 air"],
+    entities: [{ type: "zombie", pos: [0, -60, 0] }],
+    schedule: [{ afterTicks: 20, run: "say late" }],
+    client: { command: "bun", args: [resolve("src/client/test-fixtures/protocol-client.mjs")] }, goal: { kind: "completion" },
+  });
+  const server = recordingServer(commands, { worldDir: join(root, "world"), rcon: {
+    // A reused body is found settled and not burning.
+    command: async (command: string) => { commands.push(command); return command.endsWith(" Fire") ? "Tester has the following entity data: -20s" : ""; },
+    playerOnline: async () => true,
+    preparePlayerMetrics: async () => {},
+  } });
+  const scheduleDir = join(server.worldDir, "datapacks", "mine_labs_scenario", "data", "mine_labs_scenario", "function", "schedule");
+  try {
+    const result = await runScenarioTrial({ runDir: root, scenario: fixture, server, log: () => {}, settle: noSettle,
+      reuseServer: true, deferReset: (restore) => restores.push(restore) });
+    assert.equal(result.outcome, "pass", result.error);
+    const disarm = commands.indexOf("scoreboard players set #armed ml_schedule 0");
+    const arm = commands.indexOf("scoreboard players set #armed ml_schedule 1");
+    assert.ok(disarm >= 0 && disarm < commands.indexOf("reload"), JSON.stringify(commands));
+    assert.ok(arm > commands.indexOf("summon minecraft:zombie 0 -60 0"), JSON.stringify(commands));
+    for (const reset of ["scoreboard objectives add ml_schedule dummy", "scoreboard players set #clock ml_schedule 0", "scoreboard players set #done0 ml_schedule 0"]) {
+      assert.ok(commands.indexOf(reset) >= 0 && commands.indexOf(reset) < arm, reset);
+    }
+    assert.match(await readFile(join(scheduleDir, "0.mcfunction"), "utf8"), /say late/u);
+    assert.equal(restores.length, 1);
+    await restores[0]!(() => {});
+    await assert.rejects(readFile(join(scheduleDir, "0.mcfunction"), "utf8"), { code: "ENOENT" });
+  } finally { await rm(root, { recursive: true, force: true }); }
+});

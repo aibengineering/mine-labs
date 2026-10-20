@@ -13,6 +13,7 @@
  * is fully inspectable in a test without a server.
  */
 
+import { rm } from "node:fs/promises";
 import { join } from "node:path";
 import type { Dimension, Scenario } from "./schema.js";
 import { posToCommand } from "./schema.js";
@@ -171,6 +172,8 @@ const QUIET_COMMAND_FEEDBACK = "gamerule sendCommandFeedback false";
  * - entities → rcon activation commands (runs after clients are prepared)
  * - scenario.tick → a datapack with a `#minecraft:tick` function so commands
  *   fire reliably every tick (rcon spam would starve the server loop)
+ * - scenario.schedule → one-shot functions in the same datapack, armed at
+ *   `start` (see `armScheduleCommands`)
  */
 export function compileScenario(s: Scenario): CompiledScenario {
   // Everything a scenario places is in its arena dimension. Rcon runs in the
@@ -306,6 +309,9 @@ export function acceptedNoOp(command: string): RegExp | undefined {
     // state is an invariant that holds, not a fixture that failed to build.
     case "data":
       return /^Nothing changed/u;
+    // An objective a reused server already has is the state the command asks for.
+    case "scoreboard":
+      return /^An objective already exists by that name$/u;
     default:
       return undefined;
   }
@@ -394,20 +400,98 @@ function setupRegion(setup: readonly string[], scenario: Scenario): SetupRegion 
   return { dimension, minX, minY, minZ, maxX, maxY, maxZ, chunks: chunkSpan(minX, minZ, maxX, maxZ) };
 }
 
-/** Write the tick datapack into <worldDir>/datapacks if the scenario has tick commands. */
+const DATAPACK_NAMESPACE = "mine_labs_scenario";
+
+/**
+ * The scoreboard that drives `schedule`. `#armed` is 1 from `start` until the
+ * next arrangement, `#clock` counts ticks since `start`, and `#done<i>` marks
+ * entry `i` as run, so each entry fires at most once per trial.
+ */
+export const SCHEDULE_OBJECTIVE = "ml_schedule";
+
+/**
+ * Stop a previous trial's schedule from carrying into this one. Run before the
+ * new datapack is loaded; on a fresh world the objective does not exist yet
+ * and the command fails harmlessly, so it is not checked.
+ */
+export const DISARM_SCHEDULE = `scoreboard players set #armed ${SCHEDULE_OBJECTIVE} 0`;
+
+/**
+ * Start the schedule's clock at the trial's `start`: every entry is marked
+ * unrun and the clock reset before `#armed` lets the datapack act, which is
+ * what makes a reused server's second trial run its entries again.
+ */
+export function armScheduleCommands(s: Scenario): string[] {
+  if (s.schedule.length === 0) return [];
+  return [
+    `scoreboard objectives add ${SCHEDULE_OBJECTIVE} dummy`,
+    `scoreboard players set #clock ${SCHEDULE_OBJECTIVE} 0`,
+    ...s.schedule.map((_, index) => `scoreboard players set #done${index} ${SCHEDULE_OBJECTIVE} 0`),
+    `scoreboard players set #armed ${SCHEDULE_OBJECTIVE} 1`,
+  ];
+}
+
+/**
+ * One line of a generated function, in the arena dimension. A function file
+ * refuses a line with a leading slash, so it is dropped here rather than
+ * failing the whole datapack.
+ */
+function functionLine(dimension: Dimension, command: string): string {
+  return inDimension(dimension, command.trimStart().replace(/^\//u, ""));
+}
+
+/**
+ * The generated functions, by path below the namespace's `function` folder.
+ *
+ * `tick` holds the scenario's every-tick commands and, when it has a
+ * schedule, a call into `schedule/tick` gated on `#armed`. That dispatcher
+ * advances the clock and then, for each entry not yet run, checks its tick
+ * threshold and condition in the arena dimension and calls `schedule/<i>`,
+ * which marks the entry done before running its commands.
+ */
+export function datapackFunctions(s: Scenario): Record<string, string> {
+  const ns = DATAPACK_NAMESPACE;
+  const objective = SCHEDULE_OBJECTIVE;
+  const tick = s.tick.map((command) => functionLine(s.world.dimension, command));
+  const functions: Record<string, string> = {};
+  if (s.schedule.length > 0) {
+    tick.push(`execute if score #armed ${objective} matches 1 run function ${ns}:schedule/tick`);
+    const dispatch = [`scoreboard players add #clock ${objective} 1`];
+    s.schedule.forEach((entry, index) => {
+      const after = entry.afterTicks ? ` if score #clock ${objective} matches ${entry.afterTicks}..` : "";
+      const when = entry.when ? ` if ${entry.when.replace(/^\//u, "")}` : "";
+      dispatch.push(functionLine(
+        s.world.dimension,
+        `execute unless score #done${index} ${objective} matches 1${after}${when} run function ${ns}:schedule/${index}`,
+      ));
+      const commands = Array.isArray(entry.run) ? entry.run : [entry.run];
+      functions[`schedule/${index}.mcfunction`] = [
+        `scoreboard players set #done${index} ${objective} 1`,
+        ...commands.map((command) => functionLine(s.world.dimension, command)),
+      ].join("\n") + "\n";
+    });
+    functions["schedule/tick.mcfunction"] = dispatch.join("\n") + "\n";
+  }
+  functions["tick.mcfunction"] = tick.join("\n") + "\n";
+  return functions;
+}
+
+/** Write the scenario datapack into <worldDir>/datapacks: its tick commands and schedule. */
 export async function writeDatapack(s: Scenario, worldDir: string): Promise<void> {
-  const ns = "mine_labs_scenario";
+  const ns = DATAPACK_NAMESPACE;
   const root = join(worldDir, "datapacks", ns);
   await writeTextFile(
     join(root, "pack.mcmeta"),
     JSON.stringify({ pack: { pack_format: 61, description: "mine-labs scenario tick loop" } }, null, 2),
   );
+  // A previous scenario's schedule must not outlive it on a reused world.
+  const functionDir = join(root, "data", ns, "function");
+  await rm(join(functionDir, "schedule"), { recursive: true, force: true });
   // A tick function runs in the overworld like rcon does, so each command is
   // pointed at the arena the same way.
-  await writeTextFile(
-    join(root, "data", ns, "function", "tick.mcfunction"),
-    s.tick.map((command) => inDimension(s.world.dimension, command)).join("\n") + "\n",
-  );
+  for (const [path, contents] of Object.entries(datapackFunctions(s))) {
+    await writeTextFile(join(functionDir, path), contents);
+  }
   // Register the tick function via the vanilla tick tag.
   await writeTextFile(
     join(root, "data", "minecraft", "tags", "function", "tick.json"),

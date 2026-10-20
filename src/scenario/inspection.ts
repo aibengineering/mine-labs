@@ -36,6 +36,10 @@ export function inspectScenario(name: string, scenario: Scenario): ScenarioInspe
         ? `Fill ${edit.fill.block}: ${posToCommand(edit.fill.from)} to ${posToCommand(edit.fill.to)} (${edit.fill.mode ?? "replace"})`
         : "setblock" in edit ? `Place ${edit.setblock.block} at ${posToCommand(edit.setblock.at)}` : edit.run) },
       ...(["setup", "tick", "reset"] as const).filter(key => scenario[key].length).map(key => ({title: `${key} commands`, lines: scenario[key]})),
+      ...(scenario.schedule.length ? [{ title: "schedule commands", lines: scenario.schedule.flatMap(entry => [
+        `Once ${[entry.afterTicks !== undefined ? `${entry.afterTicks} ticks after start` : "", entry.when ? `when ${entry.when}` : ""].filter(Boolean).join(", then ")}:`,
+        ...(Array.isArray(entry.run) ? entry.run : [entry.run]).map(command => `  ${command}`),
+      ]) }] : []),
       ...(scenario.verification ? [{ title: "Verification boundary", lines: [`Stay within ${scenario.verification.radius} blocks horizontally of each player's start.`] }] : []),
     ],
     parameters: Object.keys(scenario.params).length ? JSON.stringify(scenario.params, null, 2).split("\n") : ["No driver parameters declared."],

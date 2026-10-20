@@ -41,7 +41,7 @@ export function validateVerification(scenario: Scenario): asserts scenario is Ve
   if (scenario.world.type !== "default" || scenario.world.seed === undefined) fail("verification requires a default world and an explicit seed");
   if (scenario.players.length !== 1 || !Array.isArray(scenario.players[0]?.pos)) fail("verification requires one player with an absolute spawn position per attempt");
   if (scenario.players.some((player) => player.op)) fail("verification clients cannot be operators");
-  for (const field of ["geometry", "entities", "setup", "reset", "tick"] as const) {
+  for (const field of ["geometry", "entities", "setup", "reset", "tick", "schedule"] as const) {
     if (scenario[field].length) fail(`verification cannot use ${field}; put common difficulty and gamerules in world`);
   }
   const checkGoal = (goal: GoalCondition): void => {

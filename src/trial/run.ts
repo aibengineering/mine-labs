@@ -25,6 +25,7 @@ import type { GoalCondition, Scenario } from "../scenario/schema.js";
 import { MinecraftServer, prepareWorldDir } from "../server/server.js";
 import {
   acceptedNoOp,
+  armScheduleCommands,
   compileScenario,
   pinRegionCommand,
   regionLoadedProbes,
@@ -32,6 +33,7 @@ import {
   UNLOADED_POSITION,
   writeDatapack,
   CLEAR_ENTITIES,
+  DISARM_SCHEDULE,
   FORCELOAD_CHUNK_LIMIT,
   type ArenaSnapshot,
   type SetupRegion,
@@ -291,6 +293,10 @@ async function measureClients(
   if (!opts.signal?.aborted) {
     await opts.onStarted?.();
     opts.signal?.throwIfAborted();
+    // The schedule's clock starts with the clients, not with arrangement.
+    for (const command of armScheduleCommands(opts.scenario)) {
+      await opts.server.rcon!.executeChecked(command, { acceptedNoOp: acceptedNoOp(command) });
+    }
     if (opts.holdPreparedWorld) await opts.server.rcon!.executeChecked("tick unfreeze");
     for (const client of clients.processes.values()) client.start();
   }
@@ -512,7 +518,7 @@ async function clearScenario(
 ): Promise<void> {
   if (!server.rcon) throw new Error("rcon unavailable during arena restore");
   // A still-running scenario tick can replace blocks immediately after clone.
-  await writeDatapack({ ...scenario, tick: [] }, server.worldDir);
+  await writeDatapack(withoutTickWork(scenario), server.worldDir);
   await server.rcon.executeChecked("reload");
   const { teardown } = compileScenario(scenario);
   const pinned = await pinRegions(server.rcon, backup.pin, log);
@@ -551,8 +557,11 @@ async function arrangeScenario(
   const rcon = server.rcon;
   if (!rcon) throw new Error("rcon unavailable before arrangement");
   if (reuseServer) await rcon.command(CLEAR_ENTITIES);
+  // A reused world still holds the last trial's schedule scores; disarm them
+  // before this trial's schedule is loaded. Unchecked: a fresh world has none.
+  if (scenario.schedule.length > 0) await rcon.command(DISARM_SCHEDULE);
   // A standby's tick commands must not run during setup or the selection wait.
-  await writeDatapack(holdPreparedWorld ? { ...scenario, tick: [] } : scenario, server.worldDir);
+  await writeDatapack(holdPreparedWorld ? withoutTickWork(scenario) : scenario, server.worldDir);
   await rcon.command("reload");
   const { setup, region } = compileScenario(scenario);
   const regions = region ? [region] : [];
@@ -575,10 +584,15 @@ async function arrangeScenario(
   return release;
 }
 
+/** The scenario with nothing for its datapack to do: no tick commands, no schedule. */
+function withoutTickWork(scenario: Scenario): Scenario {
+  return { ...scenario, tick: [], schedule: [] };
+}
+
 /** Spawn the scenario's live entities only after every client is prepared. */
 async function activateScenario(server: MinecraftServer, scenario: Scenario, deferredTick: boolean): Promise<void> {
   if (!server.rcon) throw new Error("rcon unavailable before activation");
-  if (deferredTick && scenario.tick.length) {
+  if (deferredTick && (scenario.tick.length || scenario.schedule.length)) {
     await writeDatapack(scenario, server.worldDir);
     await server.rcon.executeChecked("reload");
   }

@@ -278,7 +278,8 @@ bun run test:integration
 
 `bun test` runs the fast harness checks without starting Minecraft. The separate
 integration command starts a real server, interrupts it, and
-checks that another run can reuse its ports. It needs Java 21, a server download
+checks that another run can reuse its ports; it also runs scenario fixtures
+twice on one server with a Mineflayer client, checking what only the game can. It needs Java 21, a server download
 or cache, and writable temporary storage. On restricted hosts, set `TEMP` and
 `TMP` to a writable directory inside the workspace.
 

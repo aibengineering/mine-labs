@@ -51,7 +51,7 @@
     "dev": "bun run src/main.ts",
     "typecheck": "bunx --bun tsc -p tsconfig.json --noEmit",
     "test": "bun test",
-    "test:integration": "bun test ./src/session/shutdown.integration.ts"
+    "test:integration": "bun test ./src/session/shutdown.integration.ts ./src/trial/fixtures.integration.ts"
   },
   "keywords": [
     "minecraft",

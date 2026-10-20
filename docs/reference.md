@@ -36,6 +36,11 @@ entities:
 tick:                   # optional: commands executed EVERY tick via generated datapack
   - "execute as @e[type=zombie] run particle minecraft:flame ~ ~1 ~ 0 0 0 0 1"
 
+schedule:               # optional: commands the datapack runs ONCE per trial, after start
+  - { afterTicks: 40, run: "summon minecraft:zombie 4 -59 -4" }
+  - when: "entity @a[name=hunter,x=2,y=-61,z=-5,dx=40,dy=4,dz=10]"
+    run: ["say crossed the line", "setblock 0 -59 8 minecraft:lava"]
+
 players:
   - name: hunter        # 3-16 chars of [A-Za-z0-9_]
     pos: [0, -59, 0]
@@ -56,14 +61,40 @@ goal:
 ### Dimensions
 
 Every coordinate in a scenario is in `world.dimension`, which defaults to the
-overworld. Mine Labs points each world edit, entity, `setup`, `reset` and
-`tick` command, block goal and player teleport at that dimension over rcon,
+overworld. Mine Labs points each world edit, entity, `setup`, `reset`,
+`tick` and `schedule` command, block goal and player teleport at that dimension over rcon,
 pins and snapshots the arena there, and clamps the arena to that dimension's
 build height. Player goals such as `reach` and `entityDistance` follow the
 named player wherever it is. A player joins in the overworld, so a scenario
 anywhere else must give every player a `pos`; the loader refuses one that
 does not. A driver never has to move itself: by the time it is told `start`,
 its player is standing at its declared position in the declared dimension.
+
+### One-shot schedule
+
+`tick` runs every tick; `schedule` runs a command, or a list of commands, once
+per trial at a moment the scenario names. Each entry has `run` and at least
+one of:
+
+| field | meaning |
+| --- | --- |
+| `afterTicks` | an integer ≥ 0: run once that many game ticks have passed since `start`; `0` is the first tick |
+| `when` | the condition that follows `execute if`, such as `entity @a[name=Bot,x=2,y=-61,z=-5,dx=40,dy=4,dz=10]` or `score #t clock matches 100..`: run on the first tick it holds |
+
+An entry with both waits `afterTicks` and then for `when`. `when` is checked
+every tick in the scenario's dimension, as `tick` commands run, so a selector
+with `x`/`y`/`z` names arena coordinates; write it without `execute if`.
+Commands follow the same rules as `tick`: they run from the generated
+datapack in the scenario's dimension, and a leading slash is dropped (a
+function file refuses one).
+
+The clock starts with the clients' `start`, not with arrangement. Mine Labs
+keeps the schedule's state on the `ml_schedule` scoreboard: each entry is
+marked done before its commands run, so it never repeats, even when one of
+them fails. Every trial re-arms the schedule, so a reused server runs each
+entry again, and the previous trial's schedule is disarmed before the next
+scenario's datapack loads. A prepared spectator world, like its `tick`
+commands, loads the schedule only at the start boundary.
 
 ### Reusable scenario templates
 
@@ -487,7 +518,7 @@ boundary checked periodically, not a physical wall or a sandbox for arbitrary
 client behaviour. Time, weather, sleep effects and server load remain shared.
 Use isolated fixtures for tests that need independent control of those conditions.
 
-Verification rejects geometry, summoned entities, raw setup/reset/tick commands,
+Verification rejects geometry, summoned entities, raw setup/reset/tick/schedule commands,
 operator clients and global entity/chat/block goals. Common difficulty belongs
 in `world.difficulty`. Supported goals are `hasItem`, `completion`, `health`,
 `survive`, `reach`, and `all`/`any` combinations. Client scripts use the identity
