@@ -414,6 +414,7 @@ mine-labs run scenarios/flat --jobs 4 --repeat 10
 mine-labs run scenarios/flat --jobs 4 --repeat forever
 mine-labs run scenarios --spectator
 mine-labs run scenarios/example.yaml --spectator
+mine-labs run scenarios --tag smoke --skip-tag slow,known-failing
 ```
 
 Files and folders run headlessly once by default. `--repeat` counts complete
@@ -421,6 +422,16 @@ passes over the supplied catalog, shared across the parallel workers. `--spectat
 opens the bundled NeoForge dashboard; without a path, `run` opens `./scenarios`.
 A folder opens the selector; a single file starts immediately. An explicit
 `--repeat N` with `--spectator` queues that many passes and then pauses for inspection.
+
+`--tag <tags>` keeps only scenarios carrying at least one of the given
+[tags](../README.md#scenario-purpose-and-labels); `--skip-tag <tags>` then drops
+those carrying any of them. Both are repeatable and take comma-separated
+lists, so `--tag smoke --tag navigation` and `--tag smoke,navigation` are the
+same; tags compare exactly. Every file is still loaded and validated. The
+filters apply to headless runs, to the `--spectator` and `--tailscale`
+dashboard catalogues (including Refresh), and to `list`. Mine Labs prints how
+many scenarios were selected and how many filtered out, counting each
+verification location as one, and a filter that selects nothing is an error.
 
 The dashboard has **Keep running**, **Repeat: ONE/FOLDER**, and **Parallel**
 controls. With Keep running off, selecting one scenario runs one copy per
@@ -492,7 +503,8 @@ Ctrl+C cancels and releases the session's child processes and ports.
 | Command | Purpose |
 | --- | --- |
 | `mine-labs init` | Create an example YAML and client |
-| `mine-labs list [paths...]` | List runnable entries recursively; defaults to `./scenarios` |
+| `mine-labs list [paths...]` | List runnable entries recursively; defaults to `./scenarios`; takes `--tag` and `--skip-tag` |
+
 | `mine-labs verify <paths...> --jobs N` | Specialised shared-location throughput benchmark |
 | `mine-labs doctor` | Show the server's Java (`JAVA_HOME`, else `PATH`) against the Java 21 requirement, and the running Bun version |
 | `mine-labs ui build` | Build the client mod for development |

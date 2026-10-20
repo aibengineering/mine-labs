@@ -3,7 +3,7 @@ import test from "node:test";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { loadRunCatalog, loadScenarioCatalog } from "./catalog.js";
+import { loadRunCatalog, loadScenarioCatalog, matchesTagFilter } from "./catalog.js";
 
 test("catalog resolves client paths and expands verification locations", async () => {
   const root = await mkdtemp(join(tmpdir(), "mine-labs-catalog-"));
@@ -63,4 +63,38 @@ test("discovery deduplicates overlaps, accepts explicit JSON, and rejects invali
   await rm(join(folder, "example.yml"));
   await writeFile(yaml, "broken: [");
   await assert.rejects(loadScenarioCatalog([folder]), /not valid YAML\/JSON/);
+});
+
+test("a tag filter keeps scenarios with any wanted tag, then drops any with a skipped one", () => {
+  assert.equal(matchesTagFilter([], {}), true);
+  assert.equal(matchesTagFilter(["smoke"], { tags: [], skipTags: [] }), true);
+  assert.equal(matchesTagFilter(["smoke", "slow"], { tags: ["navigation", "smoke"] }), true);
+  assert.equal(matchesTagFilter(["navigation"], { tags: ["smoke"] }), false);
+  assert.equal(matchesTagFilter([], { tags: ["smoke"] }), false);
+  assert.equal(matchesTagFilter(["smoke", "slow"], { tags: ["smoke"], skipTags: ["slow"] }), false);
+  assert.equal(matchesTagFilter([], { skipTags: ["slow"] }), true);
+  // Tags compare exactly, as the README promises.
+  assert.equal(matchesTagFilter(["Smoke"], { tags: ["smoke"] }), false);
+});
+
+test("the run catalog filters runnable entries by tag, counting what it dropped", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "mine-labs-catalog-tags-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const common = { players: [{ name: "Tester" }], client: { command: "bun" }, goal: { kind: "completion" } };
+  await writeFile(join(root, "a.yaml"), JSON.stringify({ ...common, tags: ["smoke"] }));
+  await writeFile(join(root, "b.yaml"), JSON.stringify({ ...common, tags: ["slow"] }));
+  await writeFile(join(root, "survey.yaml"), JSON.stringify({ ...common, tags: ["survey"],
+    world: { type: "default", seed: 7 }, verification: { radius: 10, locations: [[0, 70, 0], [500, 70, 500]] } }));
+
+  const unfiltered = await loadRunCatalog([root]);
+  assert.equal(unfiltered.filtered, 0);
+  assert.equal(unfiltered.scenarios.length, 4);
+  const smoke = await loadRunCatalog([root], undefined, { tags: ["smoke", "survey"] });
+  assert.deepEqual(smoke.scenarios.map(({ id }) => id), ["a", "survey@1", "survey@2"]);
+  assert.equal(smoke.filtered, 1);
+  const skipped = await loadRunCatalog([root], undefined, { skipTags: ["survey"] });
+  assert.deepEqual(skipped.scenarios.map(({ id }) => id), ["a", "b"]);
+  assert.equal(skipped.filtered, 2, "each expanded location counts as a runnable entry");
+  await assert.rejects(loadRunCatalog([root], undefined, { tags: ["nightly"] }), /no scenarios match --tag nightly: all 4 were filtered out/u);
+  assert.equal((await loadRunCatalog([join(root, "a.yaml")], undefined, { tags: ["smoke"] })).initial, "a");
 });

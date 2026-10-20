@@ -315,6 +315,14 @@ The dashboard searches tags alongside names and cycles available labels with the
 All tags button. These filters affect the displayed list; Run folder and Run all
 continue to run their entire folder scope, as with text search.
 
+To run only part of a suite, filter the catalogue by tag on the command line:
+`run scenarios --tag smoke --skip-tag slow` keeps scenarios carrying any
+`--tag` and drops those carrying any `--skip-tag`. Both repeat and take
+comma-separated lists, apply to headless and dashboard runs and to `list`, and
+report how many scenarios they filtered out; a filter that selects nothing is
+an error. See [CLI](docs/reference.md#cli).
+
+
 ```yaml
 name: lava-approach
 tags: [navigation, smoke]

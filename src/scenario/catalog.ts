@@ -48,11 +48,45 @@ export async function loadScenarioCatalog(inputs: string[]): Promise<{ scenarios
   return { scenarios, initial };
 }
 
-/** The dashboard, list, and headless run use the same selectable trial identities. */
-export async function loadRunCatalog(inputs: string[], username?: string): Promise<{ scenarios: SessionScenario[]; initial?: string }> {
+/**
+ * Which scenarios a run keeps, by their `tags`: those carrying at least one
+ * of `tags` (every scenario when it is empty), less those carrying any of
+ * `skipTags`. Tags compare exactly, as they are written.
+ */
+export interface TagFilter {
+  tags?: readonly string[];
+  skipTags?: readonly string[];
+}
+
+export function matchesTagFilter(tags: readonly string[], filter: TagFilter): boolean {
+  const wanted = filter.tags ?? [];
+  if (wanted.length > 0 && !wanted.some((tag) => tags.includes(tag))) return false;
+  return !(filter.skipTags ?? []).some((tag) => tags.includes(tag));
+}
+
+/** The filter as it was written on the command line, for messages. */
+export function describeTagFilter(filter: TagFilter): string {
+  return [
+    ...(filter.tags?.length ? [`--tag ${filter.tags.join(",")}`] : []),
+    ...(filter.skipTags?.length ? [`--skip-tag ${filter.skipTags.join(",")}`] : []),
+  ].join(" ");
+}
+
+/**
+ * The dashboard, list, and headless run use the same selectable trial identities.
+ * A tag filter drops entries after loading, so every file is still validated;
+ * `filtered` counts the runnable entries it dropped, and a filter that leaves
+ * nothing is an error rather than an empty run.
+ */
+export async function loadRunCatalog(
+  inputs: string[],
+  username?: string,
+  filter: TagFilter = {},
+): Promise<{ scenarios: SessionScenario[]; initial?: string; filtered: number }> {
   const catalog = await loadScenarioCatalog(inputs);
   const scenarios: SessionScenario[] = [];
   const ids = new Set<string>();
+  let filtered = 0;
   for (const { file, id, category, scenario } of catalog.scenarios) {
     if (username && scenario.minecraft.version !== "1.21.4") {
       throw new ScenarioError(`${file}: the bundled Mine Labs client supports Minecraft 1.21.4; found ${scenario.minecraft.version}`);
@@ -65,11 +99,16 @@ export async function loadRunCatalog(inputs: string[], username?: string): Promi
       const attemptId = scenario.verification ? `${id}@${index + 1}` : id;
       if (ids.has(attemptId)) throw new ScenarioError(`duplicate scenario id '${attemptId}' after location expansion: rename '${file}'`);
       ids.add(attemptId);
-      scenarios.push({ id: attemptId, scenario: attempt, category });
+      if (matchesTagFilter(attempt.tags, filter)) scenarios.push({ id: attemptId, scenario: attempt, category });
+      else filtered += 1;
     }
   }
-  return { scenarios, initial: catalog.initial ? scenarios[0]!.id : undefined };
+  if (scenarios.length === 0) {
+    throw new ScenarioError(`no scenarios match ${describeTagFilter(filter)}: all ${filtered} were filtered out`);
+  }
+  return { scenarios, initial: catalog.initial ? scenarios[0]!.id : undefined, filtered };
 }
+
 
 /** Folder scans include YAML only, so generated JSON evidence is never mistaken for a test. */
 async function discoverScenarioFiles(directory: string): Promise<string[]> {

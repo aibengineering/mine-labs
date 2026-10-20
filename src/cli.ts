@@ -13,7 +13,7 @@ import { formatDuration } from "./util/text.js";
 import { writeTextFile } from "./util/fs.js";
 import { EXAMPLE_CLIENT, EXAMPLE_SCENARIO } from "./cli/templates.js";
 import { openLab } from "./ui/open.js";
-import { loadScenarioCatalog, loadRunCatalog } from "./scenario/catalog.js";
+import { describeTagFilter, loadScenarioCatalog, loadRunCatalog, type TagFilter } from "./scenario/catalog.js";
 
 function makeLog(prefix = ""): (s: string) => void {
   return (s) =>
@@ -71,7 +71,10 @@ export async function main(argv: string[]): Promise<void> {
     .option("-o, --out <dir>", "session evidence root", ".mine-labs")
     .option("--ui-port <port>", "client control API port (default: automatic, or 25578 with --tailscale)", portNumber)
     .option("--keep-runs <n>", "number of trial results to retain", nonnegativeInteger, 100)
+    .option("--tag <tags>", "run only scenarios carrying at least one of these tags (repeatable, comma-separated)", tagList, [])
+    .option("--skip-tag <tags>", "drop scenarios carrying any of these tags (repeatable, comma-separated)", tagList, [])
     .action(async (files: string[], opts, command: Command) => {
+      const tagFilter: TagFilter = { tags: opts.tag, skipTags: opts.skipTag };
       const controller = new SessionController();
       const log = makeLog("run");
       let force: ReturnType<typeof setTimeout> | undefined;
@@ -88,10 +91,11 @@ export async function main(argv: string[]): Promise<void> {
           await openLab({ paths: files.length ? files : ["scenarios"], rootDir: clientRoot,
             preferPort: opts.port, uiPort: opts.uiPort, jobs: opts.jobs, isolated: opts.isolated,
             repeat: command.getOptionValueSource("repeat") === "cli" ? opts.repeat : undefined,
-            keepRuns: opts.keepRuns, tailscale: opts.tailscale,
+            keepRuns: opts.keepRuns, tailscale: opts.tailscale, tagFilter,
             signal: controller.signal, log });
         } else {
-          const catalog = await loadRunCatalog(files);
+          const catalog = await loadRunCatalog(files, undefined, tagFilter);
+          reportTagFilter(catalog, tagFilter, log);
           const summary = await runSession({ scenarios: catalog.scenarios, rootDir: resolve(opts.out),
             jobs: opts.jobs, cycles: opts.repeat, isolated: opts.isolated, keepRuns: opts.keepRuns,
             preferPort: opts.port, delayMs: 0, controller, log,
@@ -140,8 +144,12 @@ export async function main(argv: string[]): Promise<void> {
 
   program.command("list [scenarios...]")
     .description("list runnable scenarios from files or folders (default: ./scenarios)")
-    .action(async (files: string[]) => {
-      const catalog = await loadRunCatalog(files.length ? files : ["scenarios"]);
+    .option("--tag <tags>", "list only scenarios carrying at least one of these tags (repeatable, comma-separated)", tagList, [])
+    .option("--skip-tag <tags>", "leave out scenarios carrying any of these tags (repeatable, comma-separated)", tagList, [])
+    .action(async (files: string[], opts) => {
+      const tagFilter: TagFilter = { tags: opts.tag, skipTags: opts.skipTag };
+      const catalog = await loadRunCatalog(files.length ? files : ["scenarios"], undefined, tagFilter);
+      reportTagFilter(catalog, tagFilter, (message) => console.log(pc.dim(message)));
       for (const { id, scenario } of catalog.scenarios) {
         console.log(`${pc.cyan(id)}${scenario.description ? "  " + pc.dim(scenario.description) : ""}`);
       }
@@ -173,7 +181,21 @@ export async function main(argv: string[]): Promise<void> {
   await program.parseAsync(argv);
 }
 
+/** Repeatable, comma-separated tag lists accumulate into one list. */
+function tagList(value: string, previous: string[]): string[] {
+
+  const tags = value.split(",").map((tag) => tag.trim()).filter(Boolean);
+  if (tags.length === 0) throw new Error("expected at least one tag");
+  return [...previous, ...tags];
+}
+
+function reportTagFilter(catalog: { scenarios: unknown[]; filtered: number }, filter: TagFilter, log: (message: string) => void): void {
+  if (!filter.tags?.length && !filter.skipTags?.length) return;
+  log(`${describeTagFilter(filter)}: ${catalog.scenarios.length} scenarios selected, ${catalog.filtered} filtered out`);
+}
+
 function positiveInteger(value: string): number {
+
   const parsed = Number(value);
   if (!Number.isInteger(parsed) || parsed < 1) throw new Error("expected a positive integer");
   return parsed;

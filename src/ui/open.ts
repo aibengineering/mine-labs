@@ -1,6 +1,6 @@
 import { resolve } from "node:path";
 import { mkdir } from "node:fs/promises";
-import { loadRunCatalog } from "../scenario/catalog.js";
+import { describeTagFilter, loadRunCatalog, type TagFilter } from "../scenario/catalog.js";
 import { inspectScenario } from "../scenario/inspection.js";
 import { SessionController } from "../session/controller.js";
 import { runSession } from "../session/run.js";
@@ -21,9 +21,15 @@ export async function openLab(options: {
   paths: string[]; rootDir: string; uiPort?: number; preferPort?: number;
   jobs?: number; isolated?: boolean; repeat?: number; keepRuns?: number;
   tailscale?: boolean;
+  /** Keep only scenarios matching these tags, on refresh too. */
+  tagFilter?: TagFilter;
   signal?: AbortSignal; log: (message: string) => void;
 }): Promise<void> {
-  const catalog = await loadRunCatalog(options.paths, SPECTATOR_USERNAME);
+  const catalog = await loadRunCatalog(options.paths, SPECTATOR_USERNAME, options.tagFilter);
+  if (options.tagFilter?.tags?.length || options.tagFilter?.skipTags?.length) {
+    options.log(`${describeTagFilter(options.tagFilter)}: ${catalog.scenarios.length} scenarios selected, ${catalog.filtered} filtered out`);
+  }
+
   const spectatorSetup = await collectSpectatorSetup(catalog.scenarios.map(({ scenario }) => scenario));
   const rootDir = resolve(options.rootDir);
   await mkdir(rootDir, { recursive: true });
@@ -55,7 +61,8 @@ export async function openLab(options: {
     refreshCatalog: async () => {
       // Validate the whole replacement before publishing it. Active trials retain
       // their original entry; the scheduler reads this array on its next claim.
-      const refreshed = await loadRunCatalog(options.paths, SPECTATOR_USERNAME);
+      const refreshed = await loadRunCatalog(options.paths, SPECTATOR_USERNAME, options.tagFilter);
+
       const nextSetup = await collectSpectatorSetup(refreshed.scenarios.map(({ scenario }) => scenario));
       if (spectatorSetupKey(nextSetup) !== spectatorSetupKey(spectatorSetup)) {
         throw new Error(`Spectator mods or JVM properties changed. Restart Mine Labs with ${remote ? "--tailscale" : "--spectator"} to load them.`);
