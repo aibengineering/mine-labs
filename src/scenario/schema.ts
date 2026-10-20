@@ -19,7 +19,7 @@
  */
 
 import { z } from "zod";
-import { goalSchema, type GoalCondition, type GoalSpec } from "./goal-schema.js";
+import { describeEntityScope, goalSchema, type EntityScope, type GoalCondition, type GoalSpec } from "./goal-schema.js";
 import {
   absolutePosSchema,
   posSchema,
@@ -30,11 +30,15 @@ import {
 
 export {
   absolutePosSchema,
+  describeEntityScope,
+
   goalSchema,
   posSchema,
   posToCommand,
   type AbsolutePos,
+  type EntityScope,
   type GoalCondition,
+
   type GoalSpec,
   type Pos,
 };

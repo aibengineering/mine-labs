@@ -17,12 +17,13 @@
  * whole judging layer is testable against a fake without a Minecraft server.
  */
 
-import type { Dimension, GoalCondition } from "../scenario/schema.js";
-import { posToCommand } from "../scenario/schema.js";
+import type { Dimension, EntityScope, GoalCondition } from "../scenario/schema.js";
+import { describeEntityScope, posToCommand } from "../scenario/schema.js";
 import type { ClientCompletion } from "../client/protocol.js";
 
 export interface GoalObserver {
-  countEntities(type: string): Promise<number>;
+  /** `near` coordinates are in `dimension`, the scenario's; an unscoped count spans every dimension. */
+  countEntities(type: string, scope?: EntityScope, dimension?: Dimension): Promise<number>;
   playerWithin(name: string, pos: readonly [number, number, number], radius: number): Promise<boolean>;
   playerFarFromEntities(name: string, type: string, distance: number): Promise<boolean>;
   countPlayerItems(name: string, item: string): Promise<number>;
@@ -56,16 +57,26 @@ export async function observeInitialGoalState(
   goal: GoalCondition,
   observer: GoalObserver,
   state = new Map<GoalCondition, Record<string, unknown>>(),
+  dimension: Dimension = "overworld",
 ): Promise<Map<GoalCondition, Record<string, unknown>>> {
   if (goal.kind === "kill") {
-    if ((await observer.countEntities(goal.target)) > 0) state.set(goal, { saw: true });
+    if ((await observer.countEntities(goal.target, entityScope(goal), dimension)) > 0) state.set(goal, { saw: true });
     return state;
   }
   if (goal.kind === "all" || goal.kind === "any") {
-    for (const child of goal.goals) await observeInitialGoalState(child, observer, state);
+    for (const child of goal.goals) await observeInitialGoalState(child, observer, state, dimension);
   }
   return state;
 }
+
+/** The scope a `kill` or `entityCount` goal declares, with only the fields it set. */
+function entityScope(goal: EntityScope): EntityScope {
+  return {
+    ...(goal.tag !== undefined ? { tag: goal.tag } : {}),
+    ...(goal.near !== undefined ? { near: goal.near } : {}),
+  };
+}
+
 
 function observed(condition: boolean, detail: string): GoalResult {
   return { state: condition ? "passed" : "pending", detail };
@@ -87,20 +98,23 @@ export async function evaluateGoal(goal: GoalCondition, ctx: GoalContext): Promi
     case "kill": {
       const type = goal.target;
       const st = ctx.state.get(goal) ?? {};
-      const count = await ctx.observer.countEntities(type);
+      const count = await ctx.observer.countEntities(type, entityScope(goal), ctx.dimension);
       if (count > 0) st.saw = true;
       ctx.state.set(goal, st);
       return {
         state: Boolean(st.saw) && count === 0 ? "passed" : "pending",
-        detail: `${type} remaining: ${count}${st.saw ? "" : " (none spawned yet)"}`,
+        detail: `${type}${describeEntityScope(goal)} remaining: ${count}${st.saw ? "" : " (none spawned yet)"}`,
       };
     }
     case "entityCount": {
       const type = goal.entity;
-      const count = await ctx.observer.countEntities(type);
+      const count = await ctx.observer.countEntities(type, entityScope(goal), ctx.dimension);
       const min = goal.min ?? 0;
       const max = goal.max ?? Number.MAX_SAFE_INTEGER;
-      return observed(count >= min && count <= max, `${type} count: ${count} (want ${min}..${max === Number.MAX_SAFE_INTEGER ? "∞" : max})`);
+      return observed(
+        count >= min && count <= max,
+        `${type}${describeEntityScope(goal)} count: ${count} (want ${min}..${max === Number.MAX_SAFE_INTEGER ? "∞" : max})`,
+      );
     }
     case "entityDistance": {
       const player = pickPlayer(ctx, goal);
@@ -205,9 +219,10 @@ export function describeGoal(goal: GoalCondition, indent = 0): string {
       case "reach":
         return `reach ${posToCommand(goal.pos)}${goal.radius ? ` (r=${goal.radius})` : ""}`;
       case "kill":
-        return `kill all ${goal.target}`;
+        return `kill all ${goal.target}${describeEntityScope(goal)}`;
       case "entityCount":
-        return `count ${goal.entity} ∈ [${goal.min ?? 0}, ${goal.max ?? "∞"}]`;
+        return `count ${goal.entity}${describeEntityScope(goal)} ∈ [${goal.min ?? 0}, ${goal.max ?? "∞"}]`;
+
       case "entityDistance":
         return `distance from every ${goal.entity} > ${goal.distance}`;
       case "hasItem":

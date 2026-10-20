@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { ClientCompletion } from "../client/protocol.js";
-import { evaluateGoal, observeInitialGoalState, type GoalContext, type GoalObserver } from "./goals.js";
+import { describeGoal, evaluateGoal, observeInitialGoalState, type GoalContext, type GoalObserver } from "./goals.js";
 import { scenarioSchema } from "../scenario/schema.js";
 
 function context(
@@ -241,4 +241,59 @@ test("a survive goal with who observes only that declared player", async () => {
 
   assert.equal(result.state, "passed");
   assert.deepEqual(observedPlayers, ["Collector"]);
+});
+
+test("kill and entityCount count only the entities their tag and near scope name", async () => {
+  const calls: unknown[] = [];
+  let counts = [1, 0, 2];
+  const observer: GoalObserver = {
+    ...passingObserver,
+    countEntities: async (type, scope, dimension) => { calls.push([type, scope, dimension]); return counts.shift() ?? 0; },
+  };
+  const parsed = scenarioSchema.parse({
+    client: { command: "test-client" }, world: { dimension: "the_nether" },
+    players: [{ name: "Collector", pos: [0, 70, 0] }],
+    goal: { kind: "all", goals: [
+      { kind: "kill", target: "zombie", tag: "penA" },
+      { kind: "entityCount", entity: "pig", near: { pos: [2, -60, 3], radius: 4 }, tag: "penB", min: 2 },
+    ] },
+  });
+  const goal = parsed.goal;
+  assert.ok(goal.kind === "all");
+  const state = await observeInitialGoalState(goal, observer, undefined, "the_nether");
+  const goalContext = { ...context(new Map(), observer, state), dimension: "the_nether" as const };
+  const result = await evaluateGoal(goal, goalContext);
+  assert.equal(result.state, "passed");
+  assert.deepEqual(result.children?.map((child) => child.detail), [
+    "zombie tagged penA remaining: 0",
+    "pig tagged penB within 4 blocks of 2 -60 3 count: 2 (want 2..∞)",
+  ]);
+  assert.deepEqual(calls, [
+    ["zombie", { tag: "penA" }, "the_nether"],
+    ["zombie", { tag: "penA" }, "the_nether"],
+    ["pig", { tag: "penB", near: { pos: [2, -60, 3], radius: 4 } }, "the_nether"],
+  ]);
+  assert.equal(describeGoal(goal), [
+    "ALL of:",
+    "  kill all zombie tagged penA",
+    "  count pig tagged penB within 4 blocks of 2 -60 3 ∈ [2, ∞]",
+  ].join("\n"));
+  // Unscoped goals are unchanged.
+  counts = [3];
+  assert.equal((await evaluateGoal({ kind: "entityCount", entity: "cow", max: 3 }, context(new Map(), observer))).detail, "cow count: 3 (want 0..3)");
+  assert.deepEqual(calls.at(-1), ["cow", {}, "overworld"]);
+});
+
+test("an entity scope names a scoreboard tag and a point with a radius, nothing else", () => {
+  const goal = (fields: Record<string, unknown>) => scenarioSchema.safeParse({
+    client: { command: "test-client" }, goal: { kind: "kill", target: "zombie", ...fields },
+  }).success;
+  assert.equal(goal({ tag: "pen.A-1+x_" }), true);
+  assert.equal(goal({ tag: "two words" }), false);
+  assert.equal(goal({ tag: "" }), false);
+  assert.equal(goal({ near: { pos: [0.5, -60, 0.5], radius: 0 } }), true);
+  assert.equal(goal({ near: { pos: [0, 0, 0] } }), false);
+  assert.equal(goal({ near: { pos: [0, 0, 0], radius: -1 } }), false);
+  assert.equal(goal({ near: { pos: "~ ~ ~", radius: 2 } }), false);
+  assert.equal(goal({ near: { pos: [0, 0, 0], radius: 2, dimension: "the_end" } }), false);
 });

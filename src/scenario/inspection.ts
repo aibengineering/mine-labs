@@ -1,4 +1,4 @@
-import type { GoalCondition, Scenario } from "./schema.js";
+import { describeEntityScope, type GoalCondition, type Scenario } from "./schema.js";
 import { posToCommand } from "./position-schema.js";
 
 export interface InspectionGoal { label: string; children?: InspectionGoal[] }
@@ -53,7 +53,8 @@ export function inspectScenario(name: string, scenario: Scenario): ScenarioInspe
 }
 
 function inspectGoal(goal: GoalCondition, firstPlayer: string): InspectionGoal {
-  const who = "who" in goal ? goal.who ?? firstPlayer : firstPlayer;
+  const who
+ = "who" in goal ? goal.who ?? firstPlayer : firstPlayer;
   switch (goal.kind) {
     case "all": return { label: "ALL conditions must pass (AND)", children: goal.goals.map(child => inspectGoal(child, firstPlayer)) };
     case "any": return { label: "At least ONE condition must pass (OR)", children: goal.goals.map(child => inspectGoal(child, firstPlayer)) };
@@ -64,8 +65,8 @@ function inspectGoal(goal: GoalCondition, firstPlayer: string): InspectionGoal {
     case "hasItem": return {label: `${who}: carry at least ${goal.count ?? 1} x ${goal.item}`};
     case "chat": return {label: `${who}: chat must contain every listed text: ${JSON.stringify(goal.contains)}`};
     case "entityDistance": return {label: `${who}: stay more than ${goal.distance} blocks from every ${goal.entity}`};
-    case "entityCount": return {label: `${goal.entity}: count between ${goal.min ?? 0} and ${goal.max ?? "unlimited"}`};
-    case "kill": return {label: `No ${goal.target} remaining; at least one must have been observed`};
+    case "entityCount": return {label: `${goal.entity}${describeEntityScope(goal)}: count between ${goal.min ?? 0} and ${goal.max ?? "unlimited"}`};
+    case "kill": return {label: `No ${goal.target}${describeEntityScope(goal)} remaining; at least one must have been observed`};
     case "blockAt": return {label: `${goal.block} at ${goal.pos.join(", ")}`};
     case "blocksAt": {
       const positions = goal.positions.map(pos => pos.join(", ")).join("; ");

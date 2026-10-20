@@ -27,7 +27,7 @@
 import RconClientModule from "rcon-srcds";
 import { z } from "zod";
 import { AsyncLocalStorage } from "node:async_hooks";
-import type { Dimension } from "../scenario/schema.js";
+import type { Dimension, EntityScope } from "../scenario/schema.js";
 import { inDimension, resourceId } from "../util/minecraft.js";
 
 interface RconTransport {
@@ -136,11 +136,22 @@ export class Rcon {
     });
   }
 
-  /** Server-side observations keep Mine Labs independent of any client library. */
-  countEntities(type: string): Promise<number> {
-    const entity = resourceId(type);
-    return this.query(async () => this.storeResult(`execute if entity @e[type=${entity}]`));
+  /**
+   * Server-side observations keep Mine Labs independent of any client library.
+   * Unscoped, this counts the type in every dimension; `near` counts around a
+   * point in the scenario's dimension, which is where its coordinates are.
+   */
+  countEntities(type: string, scope: EntityScope = {}, dimension: Dimension = "overworld"): Promise<number> {
+    const filters = [`type=${resourceId(type)}`];
+    if (scope.tag) filters.push(`tag=${scope.tag}`);
+    if (scope.near) filters.push(`distance=..${scope.near.radius}`);
+    const selector = `@e[${filters.join(",")}]`;
+    const command = scope.near
+      ? inDimension(dimension, `execute positioned ${scope.near.pos.join(" ")} if entity ${selector}`)
+      : `execute if entity ${selector}`;
+    return this.query(async () => this.storeResult(command));
   }
+
 
   /** Goal coordinates belong to the named player's current dimension. */
   playerWithin(name: string, pos: readonly [number, number, number], radius: number): Promise<boolean> {

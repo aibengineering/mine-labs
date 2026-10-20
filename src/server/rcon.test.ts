@@ -21,7 +21,21 @@ test("server observations translate goals into RCON queries", async () => {
   assert.ok(rcon.commands.includes("execute store success score #ml_result ml_query run execute if entity @a[name=Runner]"));
 });
 
+test("entity counts narrow by tag, and by distance from a point in the scenario's dimension", async () => {
+  const rcon = new FakeRcon([1, 2, 3]);
+
+  assert.equal(await rcon.countEntities("zombie", { tag: "penA" }), 1);
+  assert.equal(await rcon.countEntities("pig", { near: { pos: [2, -60, 3.5], radius: 4 } }), 2);
+  assert.equal(await rcon.countEntities("blaze", { tag: "penB", near: { pos: [0, 70, 0], radius: 8 } }, "the_nether"), 3);
+  assert.deepEqual(rcon.commands.filter((command) => command.startsWith("execute store result")), [
+    "execute store result score #ml_result ml_query run execute if entity @e[type=minecraft:zombie,tag=penA]",
+    "execute store result score #ml_result ml_query run execute positioned 2 -60 3.5 if entity @e[type=minecraft:pig,distance=..4]",
+    "execute store result score #ml_result ml_query run execute in minecraft:the_nether positioned 0 70 0 if entity @e[type=minecraft:blaze,tag=penB,distance=..8]",
+  ]);
+});
+
 test("reach checks use the named player's dimension and preserve a negative observation", async () => {
+
   const rcon = new FakeRcon([0]);
 
   assert.equal(await rcon.playerWithin("NetherRunner", [-240, 68, 176], 2), false);

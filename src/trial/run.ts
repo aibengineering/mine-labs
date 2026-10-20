@@ -235,7 +235,8 @@ export async function runScenarioTrial(opts: ScenarioTrialOptions): Promise<RunR
     await operatorWatch?.place();
     await activateScenario(server, scenario, Boolean(opts.holdPreparedWorld));
     const initialGoalState = server.rcon
-      ? await observeInitialGoalState(scenario.goal, server.rcon)
+      ? await observeInitialGoalState(scenario.goal, server.rcon, undefined, scenario.world.dimension)
+
       : new Map<GoalCondition, Record<string, unknown>>();
     await measureClients(opts, clients, result, initialGoalState);
   } catch (error) {

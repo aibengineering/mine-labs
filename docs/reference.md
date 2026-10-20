@@ -189,8 +189,8 @@ extension — the last segment of its catalogue id.
 | kind        | fields                          | passes when                                    |
 |-------------|---------------------------------|------------------------------------------------|
 | `reach`     | `pos`, `radius?` (default 2)    | the player is within radius of pos             |
-| `kill`      | `target`                        | entity type existed, now count == 0            |
-| `entityCount` | `entity`, `min?`, `max?`      | live entity count within [min, max]            |
+| `kill`      | `target`, `tag?`, `near?`       | entity type existed, now count == 0            |
+| `entityCount` | `entity`, `min?`, `max?`, `tag?`, `near?` | live entity count within [min, max]  |
 | `hasItem`   | `item`, `count?` (default 1)    | player's inventory holds count of item         |
 | `blockAt`   | `pos`, `block`                  | block at pos matches the requested block       |
 | `blocksAt`  | `positions`, `block`            | every listed position matches the requested block |
@@ -208,7 +208,25 @@ client. Composite `all`/`any` goals do not accept `who`.
 trial. Unknown fields are rejected so misspelled scenario options cannot be
 silently ignored.
 
+`kill` and `entityCount` count every entity of their type, in every dimension,
+unless they name a scope. `tag: penA` counts only entities carrying that
+scoreboard tag, such as ones summoned with `nbt: "{Tags:[\"penA\"]}"`, and
+`near: { pos: [x, y, z], radius: 4 }` only those within `radius` blocks of an
+absolute `pos` in the scenario's dimension. Both may be given together. A
+scoped `kill` must still have seen a matching entity before it passes, and the
+goal text and details name the scope, for example
+`zombie tagged penA within 4 blocks of 2 -60 3 remaining: 0`.
+
+```yaml
+goal:
+  kind: all
+  goals:
+    - { kind: kill, target: zombie, tag: penA }
+    - { kind: entityCount, entity: cow, near: { pos: [10, -60, 0], radius: 6 }, min: 2 }
+```
+
 `blockAt.pos` and every entry in `blocksAt.positions` must be an absolute integer
+
 `[x, y, z]` cell coordinate. `blocksAt.positions` must be nonempty. Both goals
 observe the scenario's dimension and report mismatching coordinates; combine
 groups under `all` to check different block types, including `air`. Player

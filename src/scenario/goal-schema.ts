@@ -15,7 +15,7 @@
  */
 
 import { z } from "zod";
-import { absolutePosSchema, blockPosSchema } from "./position-schema.js";
+import { absolutePosSchema, blockPosSchema, posToCommand, type AbsolutePos } from "./position-schema.js";
 
 // Every leaf may be attributed to a declared player. World observations remain
 // independent: attribution does not let a client assert that the world changed.
@@ -30,16 +30,46 @@ const reachGoalConditionSchema = z.strictObject({
   radius: z.number().nonnegative().optional(),
 });
 
+/**
+ * Which entities of a type an entity goal counts. Without either field it is
+ * every one of them; `tag` keeps those carrying that scoreboard tag (summoned
+ * with `nbt: "{Tags:[\"penA\"]}"`, say), and `near` those within `radius`
+ * blocks of `pos` in the scenario's dimension.
+ */
+export interface EntityScope {
+  tag?: string;
+  near?: { pos: AbsolutePos; radius: number };
+}
+
+/** How a scope reads after an entity type: ` tagged penA within 4 blocks of 2 -60 3`, or nothing. */
+export function describeEntityScope(scope: EntityScope): string {
+  const tag = scope.tag !== undefined ? ` tagged ${scope.tag}` : "";
+  const near = scope.near !== undefined ? ` within ${scope.near.radius} blocks of ${posToCommand(scope.near.pos)}` : "";
+  return tag + near;
+}
+
+const entityScopeFields = {
+
+  tag: z.string().regex(/^[A-Za-z0-9_.+-]+$/u, "tag must be a scoreboard tag: letters, digits and _ . + -").optional(),
+  near: z.strictObject({
+    pos: absolutePosSchema,
+    radius: z.number().nonnegative(),
+  }).optional(),
+};
+
 const killGoalConditionSchema = z.strictObject({
   ...leafGoalFields,
+  ...entityScopeFields,
   kind: z.literal("kill"),
   target: z.string().min(1),
 });
 
 const entityCountGoalConditionSchema = z.strictObject({
   ...leafGoalFields,
+  ...entityScopeFields,
   kind: z.literal("entityCount"),
   entity: z.string().min(1),
+
   min: z.number().int().nonnegative().optional(),
   max: z.number().int().nonnegative().optional(),
 });

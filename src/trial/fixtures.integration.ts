@@ -74,3 +74,26 @@ test("a declared starting hunger is what the client observes before it is prepar
   });
   assert.deepEqual(results.map((result) => [result.outcome, result.goal.detail, result.error]), [["pass", "all(3) passed", undefined], ["pass", "all(3) passed", undefined]], JSON.stringify(results.map((result) => result.goal)));
 });
+
+test("kill and entityCount count only the tagged or nearby entities they name", { timeout: 180_000 }, async () => {
+  const results = await runTwice({
+    name: "scoped-live", ...arena, client,
+    world: { type: "flat", time: "midnight", gamerules: { doDaylightCycle: false } },
+    players: [{ name: "Counter", pos: [0.5, -60, 0.5] }],
+    entities: [
+      { type: "zombie", pos: [3, -60, 3], nbt: "{NoAI:1b,Tags:[\"penA\"]}" },
+      { type: "zombie", pos: [4, -60, 3], nbt: "{NoAI:1b,Tags:[\"penA\"]}" },
+      { type: "zombie", pos: [-5, -60, -5], nbt: "{NoAI:1b}" },
+    ],
+    schedule: [{ afterTicks: 20, run: "kill @e[type=minecraft:zombie,tag=penA]" }],
+    params: { holdMs: 3000 },
+    goal: { kind: "all", timeout: 30, goals: [
+      { kind: "kill", target: "zombie", tag: "penA" },
+      { kind: "entityCount", entity: "zombie", near: { pos: [-5, -60, -5], radius: 2 }, min: 1, max: 1 },
+      { kind: "entityCount", entity: "zombie", near: { pos: [3.5, -60, 3], radius: 3 }, max: 0 },
+      { kind: "entityCount", entity: "zombie", min: 1, max: 1 },
+      { kind: "completion" },
+    ] },
+  });
+  assert.deepEqual(results.map((result) => [result.outcome, result.goal.detail, result.error]), [["pass", "all(5) passed", undefined], ["pass", "all(5) passed", undefined]], JSON.stringify(results.map((result) => result.goal)));
+});

@@ -55,3 +55,17 @@ test("inspection shows declared starting health and hunger", () => {
   assert.ok(players.includes("Health: 9"), players.join("\n"));
   assert.equal(players.filter(line => line.startsWith("Health:")).length, 2);
 });
+
+test("inspection names an entity goal's scope", () => {
+  const scenario = scenarioSchema.parse({
+    client: { command: "bun" },
+    goal: { kind: "all", goals: [
+      { kind: "kill", target: "zombie", tag: "penA" },
+      { kind: "entityCount", entity: "pig", max: 0, near: { pos: [1, 2, 3], radius: 5 } },
+    ] },
+  });
+  assert.deepEqual(inspectScenario("scoped", scenario).goal.children?.map(child => child.label), [
+    "No zombie tagged penA remaining; at least one must have been observed",
+    "pig within 5 blocks of 1 2 3: count between 0 and 0",
+  ]);
+});
