@@ -44,3 +44,14 @@ test("inspection lists each schedule entry with when it runs", () => {
     "Once 5 ticks after start, then when entity @a[name=Bot,x=2,y=-61,z=-5,dx=4,dy=4,dz=4]:", "  say a", "  say b",
   ]);
 });
+
+test("inspection shows declared starting health and hunger", () => {
+  const scenario = scenarioSchema.parse({
+    client: { command: "bun" }, goal: { kind: "completion" },
+    players: [{ name: "Hungry", food: 6 }, { name: "Wounded", health: 9 }, { name: "Plain" }],
+  });
+  const players = inspectScenario("vitals", scenario).setup.find(section => section.title === "Players")!.lines;
+  assert.ok(players.includes("Health: 20 | Food: 6 | Saturation: 0"), players.join("\n"));
+  assert.ok(players.includes("Health: 9"), players.join("\n"));
+  assert.equal(players.filter(line => line.startsWith("Health:")).length, 2);
+});

@@ -121,7 +121,8 @@ and its [bot program](examples/clients/walker.js). The YAML connects four things
 | Part | What you specify |
 | --- | --- |
 | World | Terrain, seed, blocks, mobs, and game rules |
-| Players | Names, starting positions, and inventory |
+| Players | Names, starting positions, inventory, health, and hunger |
+
 | Client | The command that launches your bot program |
 | Goal | What counts as success, and how long the bot has |
 

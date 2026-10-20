@@ -147,3 +147,21 @@ test("schedule entries need a tick count or a condition, and take one command or
   assert.match(rejected([{ when: "execute if entity @a", run: "say" }]).join("\n"), /follows `execute if`/u);
   assert.match(rejected([{ afterTicks: 1, run: "say", every: 5 }]).join("\n"), /Unrecognized key/iu);
 });
+
+test("a player's starting hunger is whole points, saturation within food, and never on peaceful", () => {
+  const base = { client: { command: "test-client" }, goal: { kind: "completion" as const } };
+  const player = (fields: Record<string, unknown>) => ({ ...base, players: [{ name: "Hungry", ...fields }] });
+  assert.deepEqual(
+    scenarioSchema.parse(player({ food: 6, saturation: 2 })).players[0],
+    { name: "Hungry", inventory: [], op: false, food: 6, saturation: 2 },
+  );
+  assert.equal(scenarioSchema.safeParse(player({ saturation: 20 })).success, true);
+  assert.equal(scenarioSchema.safeParse(player({ food: 21 })).success, false);
+  assert.equal(scenarioSchema.safeParse(player({ food: -1 })).success, false);
+  assert.equal(scenarioSchema.safeParse(player({ food: 6.5 })).success, false);
+  const capped = scenarioSchema.safeParse(player({ food: 6, saturation: 7 }));
+  assert.deepEqual(capped.error?.issues.map((issue) => issue.path), [["players", 0, "saturation"]]);
+  const peaceful = scenarioSchema.safeParse({ ...player({ food: 6 }), world: { difficulty: "peaceful" } });
+  assert.deepEqual(peaceful.error?.issues.map((issue) => issue.path), [["players", 0, "food"]]);
+  assert.equal(scenarioSchema.safeParse({ ...player({ food: 20, saturation: 3 }), world: { difficulty: "peaceful" } }).success, true);
+});

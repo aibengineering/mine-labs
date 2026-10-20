@@ -53,3 +53,24 @@ test("a schedule runs each entry once per trial, from start, on a reused server 
   });
   assert.deepEqual(results.map((result) => [result.outcome, result.goal.detail]), [["pass", "all(4) passed"], ["pass", "all(4) passed"]]);
 });
+
+test("a declared starting hunger is what the client observes before it is prepared", { timeout: 180_000 }, async () => {
+  const results = await runTwice({
+    name: "hunger-live", ...arena, client,
+    world: { type: "flat", gamerules: { naturalRegeneration: false } },
+    players: [
+      { name: "Starving", pos: [0.5, -60, 0.5], food: 6 },
+      { name: "Peckish", pos: [2.5, -60, 0.5], food: 15, saturation: 3, health: 11 },
+      { name: "Sated", pos: [4.5, -60, 0.5], saturation: 13 },
+    ],
+    params: { expectByPlayer: {
+      Starving: { food: 6, saturation: 0, health: 20 },
+      Peckish: { food: 15, saturation: 3, health: 11 },
+      Sated: { food: 20, saturation: 13, health: 20 },
+    } },
+    goal: { kind: "all", timeout: 60, goals: [
+      { kind: "completion", who: "Starving" }, { kind: "completion", who: "Peckish" }, { kind: "completion", who: "Sated" },
+    ] },
+  });
+  assert.deepEqual(results.map((result) => [result.outcome, result.goal.detail, result.error]), [["pass", "all(3) passed", undefined], ["pass", "all(3) passed", undefined]], JSON.stringify(results.map((result) => result.goal)));
+});

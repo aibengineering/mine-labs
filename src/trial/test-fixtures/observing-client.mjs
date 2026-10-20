@@ -13,7 +13,7 @@ await runNodeClient(async (ctx) => {
   await once(bot, "spawn");
   ctx.ready();
   await ctx.arranged;
-  const expect = ctx.scenario.params?.expect ?? {};
+  const expect = ctx.scenario.params?.expectByPlayer?.[ctx.username] ?? ctx.scenario.params?.expect ?? {};
   const mismatches = () => {
     const found = [];
     for (const key of ["food", "saturation", "health"]) {

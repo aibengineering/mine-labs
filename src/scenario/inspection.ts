@@ -29,6 +29,12 @@ export function inspectScenario(name: string, scenario: Scenario): ScenarioInspe
         `${player.name} | Start: ${player.pos === undefined ? "server spawn / driver setup" : posToCommand(player.pos)}`,
         `Inventory: ${player.inventory.length ? player.inventory.map(item => `${item.count} x ${item.item}`).join(", ") : "none granted"}`,
         `Equipment: ${Object.entries(player.equipment ?? {}).map(([slot, item]) => `${slot}: ${item}`).join(", ") || "none declared"}`,
+        ...(player.health !== undefined || player.food !== undefined || player.saturation !== undefined ? [[
+          `Health: ${player.health ?? 20}`,
+          ...(player.food !== undefined || player.saturation !== undefined
+            ? [`Food: ${player.food ?? 20}`, `Saturation: ${player.saturation ?? 0}`] : []),
+        ].join(" | ")] : []),
+
       ]) },
       { title: "Entities", lines: scenario.entities.length ? scenario.entities.map(entity =>
         `${entity.type} at ${posToCommand(entity.pos)}${entity.nbt ? ` | ${entity.nbt}` : ""}`) : ["None declared in YAML. The driver may create entities."] },

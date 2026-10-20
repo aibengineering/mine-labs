@@ -144,6 +144,22 @@ const playerSpecSchema = z.strictObject({
    * arrangement is visible in the scenario and finished before `start`.
    */
   health: z.number().min(1).max(20).optional(),
+  /**
+   * Food level the player starts with, out of 20. Declaring this or
+   * `saturation` sets both, before `arranged`: food defaults to 20 and
+   * saturation to 0, the state a bar drained to that level is in.
+   */
+  food: z.number().int().min(0).max(20).optional(),
+  /** Hidden saturation the player starts with; whole points, at most its food level. */
+  saturation: z.number().int().min(0).max(20).optional(),
+}).superRefine((player, context) => {
+  if (player.saturation !== undefined && player.saturation > (player.food ?? 20)) {
+    context.addIssue({
+      code: "custom",
+      path: ["saturation"],
+      message: `saturation cannot exceed the food level (${player.food ?? 20}); Minecraft caps it there`,
+    });
+  }
 });
 export type PlayerSpec = z.infer<typeof playerSpecSchema>;
 
@@ -244,7 +260,8 @@ const completeScenarioSchema = z.strictObject({
 /** Complete runner input: the client-visible definition plus its launch command. */
 export const scenarioSchema = completeScenarioSchema
   .superRefine(validateGoalPlayers)
-  .superRefine(validatePlayerPositions);
+  .superRefine(validatePlayerPositions)
+  .superRefine(validatePlayerHunger);
 export type ScenarioInput = z.input<typeof scenarioSchema>;
 export type Scenario = z.output<typeof scenarioSchema>;
 
@@ -252,7 +269,8 @@ export type Scenario = z.output<typeof scenarioSchema>;
 export const scenarioDefinitionSchema = completeScenarioSchema
   .omit({ client: true })
   .superRefine(validateGoalPlayers)
-  .superRefine(validatePlayerPositions);
+  .superRefine(validatePlayerPositions)
+  .superRefine(validatePlayerHunger);
 export type ScenarioDefinitionInput = z.input<typeof scenarioDefinitionSchema>;
 export type ScenarioDefinition = z.output<typeof scenarioDefinitionSchema>;
 
@@ -273,6 +291,25 @@ function validatePlayerPositions(
       code: "custom",
       path: ["players", index, "pos"],
       message: `player '${player.name}' needs a pos: the scenario is in ${scenario.world.dimension} and a player joins in the overworld`,
+    });
+  });
+}
+
+/**
+ * Mine Labs lowers a food bar the way the game does, with exhaustion, and on
+ * peaceful the game neither drains food nor lets it stay down.
+ */
+function validatePlayerHunger(
+  scenario: { world: { difficulty?: string }; players: PlayerSpec[] },
+  context: z.RefinementCtx,
+): void {
+  if (scenario.world.difficulty !== "peaceful") return;
+  scenario.players.forEach((player, index) => {
+    if (player.food === undefined || player.food === 20) return;
+    context.addIssue({
+      code: "custom",
+      path: ["players", index, "food"],
+      message: `player '${player.name}' cannot start hungry on peaceful: the food bar refills there`,
     });
   });
 }

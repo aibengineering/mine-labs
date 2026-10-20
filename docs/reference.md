@@ -45,6 +45,8 @@ players:
   - name: hunter        # 3-16 chars of [A-Za-z0-9_]
     pos: [0, -59, 0]
     # health: 11        # optional: start wounded, out of 20 (applied after cleanup)
+    # food: 6           # optional: starting food level, 0-20 (see Starting vitals)
+    # saturation: 0     # optional: starting saturation, whole points up to food
     inventory:          # optional: provisioned after cleanup, before ctx.start
       - { item: iron_sword, count: 1 }
 
@@ -95,6 +97,39 @@ them fails. Every trial re-arms the schedule, so a reused server runs each
 entry again, and the previous trial's schedule is disarmed before the next
 scenario's datapack loads. A prepared spectator world, like its `tick`
 commands, loads the schedule only at the start boundary.
+
+### Starting vitals
+
+A player's `health`, `food` and `saturation` are arranged before `arranged`,
+after reusable-player cleanup, so a fixture declares a wounded or hungry bot
+instead of having its driver hurt or starve itself:
+
+```yaml
+players:
+  - name: Hungry
+    pos: [0.5, -60, 0.5]
+    health: 14          # out of 20
+    food: 15            # 0-20
+    saturation: 0       # whole points, at most food
+```
+
+Declaring `food` or `saturation` sets both: `food` defaults to 20 and
+`saturation` to 0, the state a bar drained to that level is in. Saturation
+cannot exceed the food level, and a scenario on `difficulty: peaceful` cannot
+start a player hungry, since the game refills the bar there. Vanilla has no
+command that sets hunger, so Mine Labs drains the bar with the hunger effect
+and raises it with the saturation effect, reading both values back after each
+step until they match; this takes up to a few seconds per player. Less than
+one point of exhaustion can remain, as on any body whose bar just dropped.
+
+Hunger is arranged at full health, then the declared wound is dealt with
+magic damage, which armour does not reduce. A player who has just joined is
+briefly immune to damage, so Mine Labs repeats the wound until it lands. The
+game sends a client its food and saturation only with a change of health or
+food, so when no wound is declared Mine Labs deals one point and heals it
+again: the client observes the arranged values before it replies `prepared`.
+Regeneration is the scenario's to control, for example with
+`gamerules: { naturalRegeneration: false }`.
 
 ### Reusable scenario templates
 
@@ -219,7 +254,8 @@ The client reserves stdout for protocol events:
 
 `ready` means the named player has joined and armed any observers it needs.
 Mine Labs then clears reusable state, grants declared inventory, applies
-operator status and teleports the player before sending `arranged`. Each client
+operator status, sets declared hunger and health, and teleports the player
+before sending `arranged`. Each client
 observes the setup facts it depends on and replies with `prepared`. The
 dimension and starting position are the scenario's to declare, not the
 driver's to arrange; anything a driver must still check or settle before
