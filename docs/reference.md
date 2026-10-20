@@ -423,6 +423,13 @@ opens the bundled NeoForge dashboard; without a path, `run` opens `./scenarios`.
 A folder opens the selector; a single file starts immediately. An explicit
 `--repeat N` with `--spectator` queues that many passes and then pauses for inspection.
 
+`run` and `verify` lower their own CPU priority to below normal before
+starting anything, and every server and client they launch inherits it, so a
+session takes what the machine's foreground work leaves instead of competing
+with it. A process that is already lower keeps its priority. Pass
+`--normal-priority` for a dedicated machine or a timing comparison, where
+trials should get the CPU first.
+
 `--tag <tags>` keeps only scenarios carrying at least one of the given
 [tags](../README.md#scenario-purpose-and-labels); `--skip-tag <tags>` then drops
 those carrying any of them. Both are repeatable and take comma-separated

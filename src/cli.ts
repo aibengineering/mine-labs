@@ -7,6 +7,7 @@ import { runSession } from "./session/run.js";
 import { runVerification } from "./session/verification.js";
 import { SessionController } from "./session/controller.js";
 import { reapManagedChildren } from "./process/children.js";
+import { yieldToForeground } from "./process/priority.js";
 import { javaExecutable, readJavaVersion, REQUIRED_JAVA_MAJOR } from "./server/java.js";
 import { buildClientMod } from "./ui/build.js";
 import { formatDuration } from "./util/text.js";
@@ -36,6 +37,10 @@ function printResult(result: RunResult): void {
 export async function main(argv: string[]): Promise<void> {
   const program = new Command();
   program.name("mine-labs").description("language-neutral Minecraft scenario harness").version("0.1.0");
+  // Sessions start servers and clients; they run below normal unless asked not to.
+  program.hook("preAction", (_program, action) => {
+    if (["run", "verify"].includes(action.name()) && !action.opts().normalPriority) yieldToForeground();
+  });
 
   program
     .command("init")
@@ -73,6 +78,7 @@ export async function main(argv: string[]): Promise<void> {
     .option("--keep-runs <n>", "number of trial results to retain", nonnegativeInteger, 100)
     .option("--tag <tags>", "run only scenarios carrying at least one of these tags (repeatable, comma-separated)", tagList, [])
     .option("--skip-tag <tags>", "drop scenarios carrying any of these tags (repeatable, comma-separated)", tagList, [])
+    .option("--normal-priority", "run servers and clients at normal CPU priority instead of below normal")
     .action(async (files: string[], opts, command: Command) => {
       const tagFilter: TagFilter = { tags: opts.tag, skipTags: opts.skipTag };
       const controller = new SessionController();
@@ -119,6 +125,7 @@ export async function main(argv: string[]): Promise<void> {
     .option("--isolated", "use one fresh server per attempt for replay or a throughput comparison")
     .option("-p, --port <port>", "preferred server port", portNumber)
     .option("-o, --out <dir>", "verification evidence root", ".mine-labs/verification")
+    .option("--normal-priority", "run servers and clients at normal CPU priority instead of below normal")
     .action(async (files: string[], opts) => {
       const controller = new AbortController();
       const stop = (): void => controller.abort("operator request");
