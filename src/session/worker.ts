@@ -44,7 +44,9 @@ export function createSessionWorker(options: SessionOptions, workerIndex: number
     prepare: (message: string) => void, signal?: AbortSignal): Promise<HeldWorld> => {
     const key = worldCompatibilityKey(scenario);
     signal?.throwIfAborted();
-    if (!reusable || held?.key !== key || !held.restore) await release();
+    // A server sized for an earlier, smaller scenario would turn this one's
+    // clients away as "The server is full!".
+    if (!reusable || held?.key !== key || !held.restore || !held.server.fits(scenario.players.length)) await release();
     if (held) {
       prepare(`Resetting world for ${scenario.name}`);
       try {
@@ -62,7 +64,7 @@ export function createSessionWorker(options: SessionOptions, workerIndex: number
         version: scenario.minecraft.version, root, log: message => currentLog(message),
         host: options.host, preferPort: options.preferPort, worldType: scenario.world.type,
         seed: scenario.world.seed, structures: scenario.world.structures,
-        spectatorNames: username ? [username] : [],
+        players: scenario.players.length, spectatorNames: username ? [username] : [],
       });
       held = { server, key, id: `worker-${workerIndex + 1}-world-${randomUUID()}` };
       await prepareWorldDir(server.worldDir);

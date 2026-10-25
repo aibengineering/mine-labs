@@ -98,6 +98,19 @@ export interface ServerConfig {
   maxPlayers?: number;
 }
 
+/** Vanilla's default, kept as the floor so small catalogues see the server they always had. */
+const DEFAULT_MAX_PLAYERS = 10;
+
+/**
+ * `max-players` for a scenario's clients plus every operator and spectator.
+ * Operators bypass the limit in ops.json, but counting them keeps a slot free
+ * should a human join without that entry; a thirteen-pen fixture was refused
+ * "The server is full!" at the old fixed ten.
+ */
+export function playerSlots(players: number, operators: number): number {
+  return Math.max(DEFAULT_MAX_PLAYERS, players + operators);
+}
+
 export class MinecraftServer {
   rcon?: Rcon;
   private proc?: ChildProcess;
@@ -128,6 +141,11 @@ export class MinecraftServer {
     return this.cfg.operators.map((operator) => operator.name);
   }
 
+  /** Whether a scenario with this many clients fits, so a reused server never turns one away. */
+  fits(players: number): boolean {
+    return (this.cfg.maxPlayers ?? DEFAULT_MAX_PLAYERS) >= playerSlots(players, this.cfg.operators.length);
+  }
+
   static async create(opts: {
     version: string;
     root: string;
@@ -139,10 +157,14 @@ export class MinecraftServer {
     seed?: number | string;
     structures?: boolean;
     maxPlayers?: number;
+    /** The scenario's clients; with the operators and spectators it sizes `max-players`. */
+    players?: number;
     spectatorNames?: string[];
   }): Promise<MinecraftServer> {
     // Validate local configuration before acquiring resources that need release.
-    const operators = defaultOperatorProfiles();
+    const operators = [...defaultOperatorProfiles(), ...(opts.spectatorNames ?? []).map((name): OperatorProfile => ({
+      name, uuid: offlinePlayerUuid(name), level: 2, bypassesPlayerLimit: true,
+    }))];
     await linkServerRuntime(opts.root, opts.version);
     const host = opts.host ?? "127.0.0.1";
     const ports = await reserveFreePortPair(opts.preferPort ?? 25565, host);
@@ -156,10 +178,8 @@ export class MinecraftServer {
       worldType: opts.worldType ?? "flat",
       seed: opts.seed,
       structures: opts.structures ?? false,
-      maxPlayers: opts.maxPlayers,
-      operators: [...operators, ...(opts.spectatorNames ?? []).map((name): OperatorProfile => ({
-        name, uuid: offlinePlayerUuid(name), level: 2, bypassesPlayerLimit: true,
-      }))],
+      maxPlayers: opts.maxPlayers ?? playerSlots(opts.players ?? 0, operators.length),
+      operators,
     };
     try {
       const jar = await ensureServerJar(opts.version, opts.log);
@@ -208,7 +228,7 @@ export class MinecraftServer {
       "spawn-animals=false",
       "view-distance=8",
       "simulation-distance=8",
-      `max-players=${this.cfg.maxPlayers ?? 10}`,
+      `max-players=${this.cfg.maxPlayers ?? DEFAULT_MAX_PLAYERS}`,
     ];
     const root = join(this.cfg.worldDir, "..");
     await writeTextFile(join(root, "server.properties"), lines.join("\n"));

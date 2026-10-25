@@ -158,6 +158,7 @@ export async function runScenario(opts: RunOptions): Promise<RunResult> {
       worldType: opts.scenario.world.type,
       seed: opts.scenario.world.seed,
       structures: opts.scenario.world.structures,
+      players: opts.scenario.players.length,
     });
     // Nested so each block has one job: the inner one guarantees the server is
     // stopped once it exists, the outer one turns any failure — including a

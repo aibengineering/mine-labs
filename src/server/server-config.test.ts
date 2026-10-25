@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { scenarioSchema } from "../scenario/schema.js";
-import { MinecraftServer, type ServerConfig } from "./server.js";
+import { MinecraftServer, playerSlots, type ServerConfig } from "./server.js";
 
 /** A server that is never started for real: only its config and launch are exercised. */
 function serverAt(root: string, config: Partial<ServerConfig>, log: (line: string) => void = () => {}): MinecraftServer {
@@ -33,6 +33,25 @@ test("server config preserves world settings and binds offline play to loopback"
     assert.ok(properties.split("\n").includes("server-ip=127.0.0.1"));
     assert.ok(properties.split("\n").includes("online-mode=false"));
   }
+});
+
+test("max-players fits every client, operator and spectator, never below vanilla's ten", async (t) => {
+  assert.equal(playerSlots(1, 0), 10, "a small scenario keeps vanilla's ten");
+  assert.equal(playerSlots(13, 2), 15, "thirteen pens, an operator and a spectator");
+
+  const root = await mkdtemp(join(tmpdir(), "mine-labs-slots-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const spectator = { name: "LabSpectator", uuid: "u", level: 2 as const, bypassesPlayerLimit: true as const };
+  const server = serverAt(root, { maxPlayers: playerSlots(13, 1), operators: [spectator] });
+  await server["writeConfig"]();
+  const properties = (await readFile(join(root, "server.properties"), "utf8")).split("\n");
+  assert.ok(properties.includes("max-players=14"));
+
+  // A held server is reused only by a scenario whose clients still fit.
+  assert.equal(server.fits(13), true);
+  assert.equal(server.fits(14), false);
+  assert.equal(serverAt(root, {}).fits(10), true, "an unsized server is vanilla's ten");
+  assert.equal(serverAt(root, {}).fits(11), false);
 });
 
 test("server config binds a Tailscale remote mode server to the tailnet address only", async (t) => {

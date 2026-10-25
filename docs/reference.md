@@ -277,6 +277,9 @@ client:
 The command runs with the scenario file's directory as its working directory.
 `env` values are merged over Mine Labs' inherited process environment and must
 be strings.
+The server's `max-players` fits every entry in `players:` plus each operator
+and the spectator, and is never below vanilla's ten; a reused server too small
+for the next scenario is replaced.
 Mine Labs launches one process for each entry in `players:` and sends:
 
 ```json
